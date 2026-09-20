@@ -37,6 +37,7 @@ Freenove 4WD Car Kit for ESP32（FNK0053）をベースに、猫のように気�
 - 着手前に docs/specs/ の該当ミニ仕様と docs/catalog.md を読む
 - 完了したら docs/catalog.md の状態を更新する
 - コミットメッセージの先頭にIDを付ける（例：「#10 見上げる：初版」）
+- IDに紐づかない変更（方針・文書・ツール）は先頭に #0 を付ける
 - 書き込み（upload）は、私が許可したときだけ行う
 - 仕様の変更理由は docs/decisions.md に1行で残す
 
