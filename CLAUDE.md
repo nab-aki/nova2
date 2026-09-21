@@ -34,6 +34,7 @@ Freenove 4WD Car Kit for ESP32（FNK0053）をベースに、猫のように気�
 ## 作業ルール
 - 1回の依頼では、カタログの1ID分だけを実装する
 - 依存するIDの最小版と共通部品は、同じ依頼で作ってよい
+- セッションの最初に docs/handoff.md を読む（現在地・進行中・次にやること）
 - 着手前に docs/specs/ の該当ミニ仕様と docs/catalog.md を読む
 - 完了したら docs/catalog.md の状態を更新する
 - コミットメッセージの先頭にIDを付ける（例：「#10 見上げる：初版」）
@@ -47,3 +48,4 @@ Freenove 4WD Car Kit for ESP32（FNK0053）をベースに、猫のように気�
 - docs/specs/          ミニ仕様（_template.md をコピーして作成）
 - docs/decisions.md    判断記録
 - docs/measurements.md 実測値
+- docs/handoff.md      引き継ぎ文書（現在地・次にやること。セッションの最初に読む）
