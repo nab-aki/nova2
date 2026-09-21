@@ -7,11 +7,13 @@
 #include "obstacle.h"
 
 static bool stopping = false;
+static bool debugTurnActive = false;   // デバッグ回転の1ステップの間は、障害物「あり」では止めない
 static bool lifted = false;
 static int liftClearCount = 0;   // 床に戻ってから、111 以外を読んだ連続回数
 
 void Safety_Setup(void) {
   stopping = false;
+  debugTurnActive = false;
   lifted = false;
   liftClearCount = 0;
 }
@@ -76,14 +78,20 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
     return;
   }
 
-  // 3. 障害物があれば、近づく向きの動き（前進・片側旋回）だけを即停止する
+  // 3. 障害物があれば、近づく向きの動き（前進・片側旋回）だけを即停止する。
+  //    デバッグ回転の1ステップの間は、「あり」の判定では止めない（非常停止距離未満では止める）
   bool danger = Obstacle_IsBlocked() || Obstacle_IsEmergency();
-  if (danger && MovingTowardObstacle()) {
+  bool mustStop = (debugTurnActive ? false : Obstacle_IsBlocked()) || Obstacle_IsEmergency();
+  if (mustStop && MovingTowardObstacle()) {
     const char *reason = Obstacle_IsEmergency() ? "非常停止（近すぎる）" : "障害物あり";
     Log_Printf("安全", "%s のため即停止（距離 %.1fcm）", reason, Obstacle_LastCm());
     Motion_EmergencyStop();
   }
   stopping = danger;
+}
+
+void Safety_SetDebugTurnActive(bool active) {
+  debugTurnActive = active;
 }
 
 bool Safety_IsStopping(void) {

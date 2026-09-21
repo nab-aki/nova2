@@ -19,6 +19,12 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs);
 // 安全層が車体を止めている状態か（表示用）
 bool Safety_IsStopping(void);
 
+// デバッグ回転（3〜6）の1ステップの間だけ、障害物「あり」による停止を外す（回転角の測定用）。
+// 障害物の近くでも片側旋回を回して測れるようにするため。持ち上げの停止と、
+// 非常停止距離（OBSTACLE_EMERGENCY_CM）未満での停止は、外さない。
+// 本番の動き（ID25・ID15）には影響しない。デバッグ回転の開始で true、終了・中断で false にすること。
+void Safety_SetDebugTurnActive(bool active);
+
 // 持ち上げられているか。振る舞いはこの間、状態を進めない。
 // 床に戻ったら、続きからではなく最初からやり直す（docs/specs/25_wander.md）
 bool Safety_IsLifted(void);

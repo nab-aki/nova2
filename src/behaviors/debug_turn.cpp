@@ -1,6 +1,7 @@
 #include "debug_turn.h"
 
 #include "../config.h"
+#include "../core/obstacle.h"
 #include "../core/safety.h"
 #include "../hal/hal_battery.h"
 #include "../hal/hal_log.h"
@@ -42,6 +43,12 @@ void DebugTurnBehavior::begin(unsigned long nowMs) {
   startMs_ = nowMs;
   batteryIdleV_ = Battery_ReadVoltage();   // 動き出す前の電圧
   batterySamples_ = 0;
+  Safety_SetDebugTurnActive(true);         // このステップの間だけ、障害物「あり」による停止を外す
+  if (Obstacle_IsBlocked()) {
+    Log_Printf("デバッグ", "前方に障害物あり（%.1fcm）ですが、この1ステップの間は障害物による停止を外します"
+               "（%.0fcm 未満の非常停止と、持ち上げでは止まります）",
+               Obstacle_LastCm(), OBSTACLE_EMERGENCY_CM);
+  }
   Log_Printf("デバッグ", "%s を %lums（1ステップ）。回った角度を測ってください",
              Motion_TurnName(kind_), durationMs_);
   Motion_StartTurn(kind_, nowMs);
@@ -67,12 +74,14 @@ void DebugTurnBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
     Log_Printf("デバッグ", "持ち上げられたので中止します");
     Motion_StopTurn(nowMs);
     running_ = false;
+    Safety_SetDebugTurnActive(false);
     return;
   }
   sampleBattery(nowMs);
   if (nowMs - startMs_ >= durationMs_) {
     Motion_StopTurn(nowMs);
     running_ = false;
+    Safety_SetDebugTurnActive(false);
     Log_Printf("デバッグ", "%s の1ステップが終わりました", Motion_TurnName(kind_));
     reportBattery();
   }
@@ -82,4 +91,5 @@ void DebugTurnBehavior::onStop(unsigned long nowMs) {
   Motion_StopTurn(nowMs);
   running_ = false;
   requested_ = false;
+  Safety_SetDebugTurnActive(false);
 }
