@@ -101,6 +101,10 @@ static void PrintKeyHelp(void) {
 
 // 止まっていて、立て直しの最中でも持ち上げ中でもないときだけ受け付ける
 static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
+  if (debugTurnBehavior.isBusy()) {
+    Log_Printf("キー", "回転の最中（または予約済み）なので無視します");
+    return;
+  }
   if (Safety_IsLifted()) {
     Log_Printf("キー", "持ち上げられているので無視します");
     return;
@@ -119,8 +123,24 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
 }
 
 static void HandleSerialKeys(void) {
+  static char lastKey = 0;
+  static unsigned long lastKeyMs = 0;
+
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      continue;   // 改行は無視（端末が自動で付ける場合がある）。連打の判定にも使わない
+    }
+    // キーを押しっぱなしにしたときの自動リピート（数十ms間隔）と、指のバウンスを無視する。
+    // 同じキーが DEBUG_KEY_REPEAT_MS 以内に続いたら、リピートとみなして捨てる
+    // （1ステップだけ回す・一時停止を切り替える、が押しっぱなしで繰り返されないように）。
+    unsigned long now = millis();
+    bool repeat = (c == lastKey) && (now - lastKeyMs < DEBUG_KEY_REPEAT_MS);
+    lastKey = c;
+    lastKeyMs = now;   // リピートが続く間は延長して、途切れるまで捨て続ける
+    if (repeat) {
+      continue;
+    }
     switch (c) {
       case '3': RequestDebugTurn(TURN_ROTATE_LEFT, TROUBLE_TURN_STEP_MS);   break;
       case '4': RequestDebugTurn(TURN_ROTATE_RIGHT, TROUBLE_TURN_STEP_MS);  break;

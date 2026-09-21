@@ -150,6 +150,7 @@
 // 0 が既定（今までどおり、起動したらすぐうろうろを始める）。
 // 【いまは 1】回転角の測定中のため。測り終えたら 0 に戻すこと（5分間の試験の前など）。
 #define DEBUG_START_PAUSED          1
+#define DEBUG_KEY_REPEAT_MS         250     // 同じキーがこれより短い間隔で続いたら、押しっぱなしのリピートとみなして捨てる
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
 

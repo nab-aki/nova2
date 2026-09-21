@@ -23,7 +23,12 @@ class DebugTurnBehavior : public Behavior {
   // 1ステップ分を予約する。次の調停で実行される
   void request(TurnKind kind, unsigned long durationMs);
 
+  // 予約済み、または実行中か。この間の新しいキーは受け付けない
+  bool isBusy() const { return requested_ || running_; }
+
  private:
+  void begin(unsigned long nowMs);
+
   bool requested_ = false;
   bool running_ = false;
   TurnKind kind_ = TURN_ROTATE_LEFT;

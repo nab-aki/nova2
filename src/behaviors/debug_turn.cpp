@@ -16,7 +16,8 @@ int DebugTurnBehavior::priority(const SensorData &sensors, unsigned long nowMs) 
   return (requested_ || running_) ? PRIORITY_DEBUG_TURN : 0;
 }
 
-void DebugTurnBehavior::onStart(unsigned long nowMs) {
+// 1ステップを始める
+void DebugTurnBehavior::begin(unsigned long nowMs) {
   requested_ = false;
   running_ = true;
   startMs_ = nowMs;
@@ -25,9 +26,19 @@ void DebugTurnBehavior::onStart(unsigned long nowMs) {
   Motion_StartTurn(kind_, nowMs);
 }
 
+void DebugTurnBehavior::onStart(unsigned long nowMs) {
+  begin(nowMs);
+}
+
 void DebugTurnBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
   if (!running_) {
+    // 1ステップが終わってから調停が手放すまでの間に、次の予約が入ることがある。
+    // このとき調停は「まだ実行中」なので onStart が呼ばれない。ここで始めないと、
+    // 予約（requested_）だけが残って優先度を返し続け、以後のキーがすべて効かなくなる
+    if (requested_) {
+      begin(nowMs);
+    }
     return;
   }
   // 持ち上げられたら安全層が止める。こちらも1ステップを打ち切る
