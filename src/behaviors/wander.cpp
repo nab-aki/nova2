@@ -50,6 +50,14 @@ void WanderBehavior::onStart(unsigned long nowMs) {
 }
 
 void WanderBehavior::onStop(unsigned long nowMs) {
+  // 片側旋回の途中で手放されたら、理由を1行残す。旋回中に障害物「あり」に変わると、
+  // ID9（優先度30）が割り込み、安全層も旋回を止める。そのあとは ID9・ID15 が引き継ぐ
+  if (state_ == STATE_AVOID) {
+    Log_Printf("うろうろ", "片側旋回の途中で交代しました（%lums で中断、%s。距離 %.1fcm）。向きは変わりきっていません",
+               nowMs - stateStartMs_,
+               Obstacle_IsBlocked() ? "障害物ありのため ID9 に" : "ほかの振る舞い（デバッグ回転・一時停止など）に",
+               Obstacle_LastCm());
+  }
   Motion_Stop(nowMs);            // 回転中ならここで取り消される
   Neck_Release(NECK_OWNER_RANGE);
 }
@@ -148,6 +156,15 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_AVOID:
+      // 安全層に旋回を止められた（非常停止距離未満など）。時間を待たずに旋回を終えて次へ進む。
+      // まだ「あり」なら、次のループで ID9 が引き継ぐ
+      if (!Motion_IsTurning()) {
+        Log_Printf("うろうろ", "片側旋回が安全層に止められました（%lums で中断、距離 %.1fcm）。向きは変わりきっていません",
+                   nowMs - stateStartMs_, Obstacle_LastCm());
+        pendingPivot_ = false;
+        ChangeState(STATE_READY, nowMs);
+        return;
+      }
       if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(pivotKind_)) {
         return;
       }
