@@ -5,6 +5,7 @@
 
 #include "hal_battery.h"
 #include "hal_buzzer.h"
+#include "hal_ir.h"
 #include "hal_light.h"
 #include "hal_matrix.h"
 #include "hal_motor.h"

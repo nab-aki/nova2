@@ -1,6 +1,6 @@
 // ピン番号・I2Cアドレス（Freenove 公式サンプルの定義に従う。独自に変更しない）
 //   https://github.com/Freenove/Freenove_4WD_Car_Kit_for_ESP32
-//   Sketches/06.3_Multi_Functional_Car, 01.5_Matrix, 01.6_WS2812, 02.1_Ultrasonic_Ranging ほか
+//   Sketches/06.3_Multi_Functional_Car, 01.5_Matrix, 01.6_WS2812, 02.1_Ultrasonic_Ranging, 05.1_IR_Receiver ほか
 #ifndef NOVA_HAL_PINS_H
 #define NOVA_HAL_PINS_H
 
@@ -47,6 +47,11 @@
 #define PIN_WS2812           32
 #define WS2812_COUNT         12
 #define WS2812_RMT_CHANNEL   0
+
+// IR受信（リモコン）。公式サンプル 05.1〜05.3 の RECV_PIN
+// 【注意】GPIO0 は起動時のモード選択（strapping）のピン。受信モジュールは待機時に High なので通常は問題ないが、
+// 起動の瞬間にリモコンを押すと起動を妨げるおそれがある（カメラのクロックと共用だが、カメラは未使用）。
+#define PIN_IR_RECV          0
 
 // パッシブブザー
 #define PIN_BUZZER           2

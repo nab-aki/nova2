@@ -8,6 +8,7 @@ bool Hal_Setup(void) {
   Servo_Setup();     // 首は正面・水平から始める
   Matrix_Setup();
   Ultrasonic_Setup();
+  Ir_Setup();        // リモコン（GPIO0）。GPIO割り込みとタイマー3を使う
   Buzzer_Setup();
   Light_Setup();
   Battery_Setup();

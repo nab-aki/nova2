@@ -249,6 +249,8 @@ void loop() {
   unsigned long now = millis();
 
   HandleSerialKeys();
+  uint32_t irCode;
+  Ir_Poll(&irCode);   // 受信したボタンは hal_ir が1行出す（ボタンへの割り当ては次のコミット）
   Buzzer_Update(now);
   Sensors_Update(now);
   Neck_Update(now);
