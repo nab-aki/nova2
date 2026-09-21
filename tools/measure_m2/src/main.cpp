@@ -9,12 +9,17 @@
 //   Sketches/01.4_Battery_level       （電池電圧読み取り）
 //   Sketches/02.1_Ultrasonic_Ranging  （超音波測距）
 //
-// シリアル（115200bps）からの1文字コマンドで、次の4つを測る。
+// シリアル（115200bps）からの1文字コマンドで、次の5つを測る。
 // ・水平角度の探索：servo2 を1°ずつ動かし、現在角度と距離を表示する
 // ・首の安定時間：首を左右に振って正面に戻した直後から、20ms間隔で1秒間測距する（5回）
 // ・測距のばらつき：20回測って 最小・最大・平均・中央値・標準偏差 を出す
 // ・停止距離：指定PWMで前進し、正面の障害物が閾値に達したら即停止して、停止までの滑走距離を測る
-// 結果は、そのまま docs/measurements.md に貼れる表の行（| 項目 | 値 | 条件・備考 | 測定日 |）でも出力する。
+// ・最低PWM：前進・後退・その場回転（左右）・片側旋回（左右）を、本体と同じ 50Hz で2秒だけ動かしてすぐ止める。
+//   前進・後退は PWM450〜700（25刻み）、回転・片側旋回は PWM700〜2000（50刻み）。
+//   前進・後退は前方の壁との距離の変化から、動いたかと速度（cm/s）も出す
+// ・回り続ける最低PWM：回転・片側旋回を動かし続けたまま、キーで50ずつ下げて、止まる直前の値を探す
+// 結果は、そのまま docs/measurements.md に貼れる表の行（| 項目 | 値 | 条件・備考 | 測定日 |）でも出力する
+// （最低PWMは動いたかを目で判断するので、行は出さず、各回の結果の行を貼ってもらう）。
 //
 // 【走行の安全策】超音波が10cm未満になったら即停止／走行中はどのキーでも即停止／
 // 走行中は首を正面・水平に固定／測距が途切れたら停止／一定時間で停止。
@@ -55,7 +60,7 @@
 #define SERVO1_FRONT_DEG        84     // servo1（左右）の正面
 #define SERVO1_MIN_DEG          20     // servo1 の可動範囲（実測）
 #define SERVO1_MAX_DEG          140
-#define SERVO2_LEVEL_DEG        90     // servo2（上下）の水平の初期値。'l' コマンドで測定後に更新できる
+#define SERVO2_LEVEL_DEG        98     // servo2（上下）の水平（実測。超音波が水平になる角度）。'l' コマンドで測り直して更新できる
 #define SERVO2_MIN_DEG          90     // servo2 の可動範囲（実測）
 #define SERVO2_MAX_DEG          140
 #define NECK_SETTLE_MS          700    // 首を正面・水平にしてから測距や走行を始めるまでの待ち
@@ -105,6 +110,27 @@
 #define DRIVE_STOP_MIN_MS       200    // 停止命令からこの時間は「停止」と判定しない
 #define DRIVE_STOP_MAX_MS       2500   // 停止命令からこの時間で判定を打ち切る
 
+// 最低PWM（前進・後退・回転・片側旋回で、50Hz で動き出す最低のPWMを探す）
+// 前進・後退：700 は前進で動くことを実測済み。回転・片側旋回：700 では回り始めなかったため 2000 まで広げた
+#define MINPWM_LINEAR_LO        450    // 前進・後退で試すPWMの範囲
+#define MINPWM_LINEAR_HI        700
+#define MINPWM_LINEAR_STEP      25
+#define MINPWM_TURN_LO          700    // 回転・片側旋回で試すPWMの範囲（上限は DRIVE_PWM_LIMIT と同じ）
+#define MINPWM_TURN_HI          2000
+#define MINPWM_TURN_STEP        50
+#define MINPWM_RUN_MS           2000   // 各PWMで動かす時間（すぐ止まる）
+#define MINPWM_REST_MS          800    // 停止後、車体が止まりきるまで待って最終の距離を測る時間
+#define MINPWM_ARM_MS           700    // 首を固定して、キー入力を待つ準備時間（この間はモーターは動かない）
+#define MINPWM_SPEED_FROM_MS    500    // 速度は、動かし始めてこの時間以降の測距から求める（立ち上がりを除く）
+#define MINPWM_SPEED_SPAN_MS    400    // 速度を求めるのに必要な、測距の最小の時間幅
+#define MINPWM_MOVED_CM         2.0f   // 前方の距離がこれ以上変わったら「前進／後退した」目安（σ0.2cm以下の実測より十分大きい）
+#define MINPWM_SAMPLES_MAX      96     // 1回の走行で記録する測距の最大数（30ms間隔で約2.9秒）
+
+// 回り続ける最低PWM（回転・片側旋回を動かし続けたまま、PWMをキーで変えて、止まる直前の値を探す）
+#define HOLD_STEP               50     // 1回のキーで変えるPWM
+#define HOLD_PWM_MIN            100    // 下げられる下限
+#define HOLD_IDLE_MS            20000  // キー入力がこの時間なければ自動停止
+
 #define COLLECT_MAX             20     // ばらつき測定の最大サンプル数
 
 // ======================== モーター・首サーボ（PCA9685経由）======================== //
@@ -126,32 +152,47 @@ void Pca9685_Setup(void) {
   pca9685.setToFrequency(PCA9685_FREQUENCY_HZ);
 }
 
-// 1輪分の出力。正転は IN1、逆転は IN2 にPWMを出し、もう一方は0にする（この測定ツールは前進のみ）
-static void SetWheelForward(uint8_t chIn1, uint8_t chIn2, int pwm) {
-  pca9685.setChannelPulseWidth(chIn1, pwm);
-  pca9685.setChannelPulseWidth(chIn2, 0);
+// 1輪分の出力。正転は IN1、逆転は IN2 にPWMを出し、もう一方は0にする（pwm の符号で向きが決まる）
+static void SetWheel(uint8_t chIn1, uint8_t chIn2, int pwm) {
+  if (pwm >= 0) {
+    pca9685.setChannelPulseWidth(chIn1, pwm);
+    pca9685.setChannelPulseWidth(chIn2, 0);
+  } else {
+    pca9685.setChannelPulseWidth(chIn1, 0);
+    pca9685.setChannelPulseWidth(chIn2, -pwm);
+  }
 }
 
-static int lastForwardPwm = -1;  // 直前に出力した前進PWM（同じ値ならI2Cへ書き込まない）
+static int lastLeftPwm = 0;    // 直前に出力した左側（M1・M2）のPWM（同じ値ならI2Cへ書き込まない）
+static int lastRightPwm = 0;   // 同・右側（M3・M4）。前進が正、後退が負
+
+// 左側（M1・M2）と右側（M3・M4）を別々のPWM（符号付き）で駆動する。
+// 前進 (+p,+p)、後退 (-p,-p)、左回転 (-p,+p)、右回転 (+p,-p)
+void Motor_Move(int left, int right) {
+  left = constrain(left, -DRIVE_PWM_LIMIT, DRIVE_PWM_LIMIT);
+  right = constrain(right, -DRIVE_PWM_LIMIT, DRIVE_PWM_LIMIT);
+  if (left == lastLeftPwm && right == lastRightPwm) return;
+  lastLeftPwm = left;
+  lastRightPwm = right;
+  SetWheel(PIN_MOTOR_M1_IN1, PIN_MOTOR_M1_IN2, left);
+  SetWheel(PIN_MOTOR_M2_IN1, PIN_MOTOR_M2_IN2, left);
+  SetWheel(PIN_MOTOR_M3_IN1, PIN_MOTOR_M3_IN2, right);
+  SetWheel(PIN_MOTOR_M4_IN1, PIN_MOTOR_M4_IN2, right);
+}
 
 // 4輪を同じPWMで前進させる
 void Motor_Forward(int pwm) {
-  pwm = constrain(pwm, 0, DRIVE_PWM_LIMIT);
-  if (pwm == lastForwardPwm) return;
-  lastForwardPwm = pwm;
-  SetWheelForward(PIN_MOTOR_M1_IN1, PIN_MOTOR_M1_IN2, pwm);
-  SetWheelForward(PIN_MOTOR_M2_IN1, PIN_MOTOR_M2_IN2, pwm);
-  SetWheelForward(PIN_MOTOR_M3_IN1, PIN_MOTOR_M3_IN2, pwm);
-  SetWheelForward(PIN_MOTOR_M4_IN1, PIN_MOTOR_M4_IN2, pwm);
+  Motor_Move(pwm, pwm);
 }
 
 // 停止。安全のため、直前の値に関わらず必ず書き込む
 void Motor_Stop(void) {
-  lastForwardPwm = 0;
-  SetWheelForward(PIN_MOTOR_M1_IN1, PIN_MOTOR_M1_IN2, 0);
-  SetWheelForward(PIN_MOTOR_M2_IN1, PIN_MOTOR_M2_IN2, 0);
-  SetWheelForward(PIN_MOTOR_M3_IN1, PIN_MOTOR_M3_IN2, 0);
-  SetWheelForward(PIN_MOTOR_M4_IN1, PIN_MOTOR_M4_IN2, 0);
+  lastLeftPwm = 0;
+  lastRightPwm = 0;
+  SetWheel(PIN_MOTOR_M1_IN1, PIN_MOTOR_M1_IN2, 0);
+  SetWheel(PIN_MOTOR_M2_IN1, PIN_MOTOR_M2_IN2, 0);
+  SetWheel(PIN_MOTOR_M3_IN1, PIN_MOTOR_M3_IN2, 0);
+  SetWheel(PIN_MOTOR_M4_IN1, PIN_MOTOR_M4_IN2, 0);
 }
 
 // 角度（0〜180°）をPCA9685のパルス幅に変換して出力する（公式サンプルと同じ map(0-180 -> 102-512)、50Hz動作）
@@ -352,12 +393,27 @@ static int amplitudeIndex = 1;
 static int drivePwm = DRIVE_PWM_DEFAULT;
 static int stopThresholdCm = STOP_THRESHOLD_DEFAULT_CM;
 
+// 最低PWM測定の設定。モードは 前進・後退・左回転・右回転・左片側旋回・右片側旋回（'1'〜'6' で選ぶ）
+// 片側旋回：片側の車輪だけを前進させ、もう片側は止める（0）。左片側旋回は右輪だけ前進して左へ曲がる
+enum MinPwmMode { MP_FORWARD, MP_BACKWARD, MP_ROTATE_LEFT, MP_ROTATE_RIGHT, MP_PIVOT_LEFT, MP_PIVOT_RIGHT };
+
+// 前進・後退は前方の壁との距離で動きを見られる。回転・片側旋回は目で見る
+static bool MinPwmModeIsLinear(MinPwmMode m) {
+  return m == MP_FORWARD || m == MP_BACKWARD;
+}
+static int MinPwmLo(MinPwmMode m)   { return MinPwmModeIsLinear(m) ? MINPWM_LINEAR_LO : MINPWM_TURN_LO; }
+static int MinPwmHi(MinPwmMode m)   { return MinPwmModeIsLinear(m) ? MINPWM_LINEAR_HI : MINPWM_TURN_HI; }
+static int MinPwmStep(MinPwmMode m) { return MinPwmModeIsLinear(m) ? MINPWM_LINEAR_STEP : MINPWM_TURN_STEP; }
+
+static MinPwmMode minPwmMode = MP_FORWARD;
+static int minPwm = MINPWM_LINEAR_LO;
+
 static bool TargetIsWall(void) {
   return targetIndex >= 2;
 }
 
 // ======================== 実行中の測定（同時に1つだけ）======================== //
-enum Job { JOB_IDLE, JOB_SETTLE, JOB_COLLECT, JOB_DRIVE };
+enum Job { JOB_IDLE, JOB_SETTLE, JOB_COLLECT, JOB_DRIVE, JOB_MINPWM, JOB_HOLD };
 static Job job = JOB_IDLE;
 static unsigned long phaseMs = 0;   // 現在のフェーズを始めた時刻
 
@@ -925,6 +981,315 @@ static void Drive_Update(unsigned long now, bool hasEv, const SonarSample &ev) {
   }
 }
 
+// ------------------------ 最低PWM（動き出す最低のPWMを探す）------------------------ //
+// 指定PWMを 0 から一気に出し、2秒だけ動かして止める（本体は 50Hz。加速のなめらかさは付けない）。
+// 動いたかどうかの判断：前進・後退は、前方の壁との距離の変化（目安）と目視。回転は目視。
+enum MinPwmPhase { MPP_ARM, MPP_RUN, MPP_REST };
+enum MinPwmReason { MPR_DONE, MPR_EMERGENCY, MPR_KEY, MPR_NO_ECHO };
+
+static const char *MinPwmModeName(MinPwmMode m) {
+  switch (m) {
+    case MP_FORWARD:      return "前進";
+    case MP_BACKWARD:     return "後退";
+    case MP_ROTATE_LEFT:  return "左回転";
+    case MP_ROTATE_RIGHT: return "右回転";
+    case MP_PIVOT_LEFT:   return "左片側旋回";
+    default:              return "右片側旋回";
+  }
+}
+
+static const char *MinPwmReasonName(MinPwmReason r) {
+  switch (r) {
+    case MPR_DONE:      return "時間どおり";
+    case MPR_EMERGENCY: return "非常停止（10cm未満）";
+    case MPR_KEY:       return "キー入力";
+    default:            return "測距が途切れた";
+  }
+}
+
+static MinPwmPhase minPwmPhase = MPP_ARM;
+static MinPwmReason minPwmReason = MPR_DONE;
+static MinPwmMode minPwmRunMode = MP_FORWARD;       // この走行のモード・PWM
+static int minPwmRunPwm = 0;
+static unsigned long minPwmStartMs = 0;
+static unsigned long minPwmStopMs = 0;
+static unsigned long minPwmLastValidMs = 0;         // 最後に有効な測距が得られた時刻（0=まだない）
+static float minPwmLastCm = 0.0f;
+static float minPwmStartCm = NAN;                   // 走行開始時の前方の距離（測れなければ NAN）
+static float minPwmBatteryIdle = NAN;
+static int minPwmSampleCount = 0;
+static unsigned long minPwmSampleMs[MINPWM_SAMPLES_MAX];   // 走行開始からの経過時間
+static float minPwmSampleCm[MINPWM_SAMPLES_MAX];
+
+static void MinPwm_Drive(MinPwmMode mode, int pwm) {
+  switch (mode) {
+    case MP_FORWARD:      Motor_Move(pwm, pwm);   break;
+    case MP_BACKWARD:     Motor_Move(-pwm, -pwm); break;
+    case MP_ROTATE_LEFT:  Motor_Move(-pwm, pwm);  break;   // 左輪が後退・右輪が前進
+    case MP_ROTATE_RIGHT: Motor_Move(pwm, -pwm);  break;
+    case MP_PIVOT_LEFT:   Motor_Move(0, pwm);     break;   // 右輪だけ前進（左輪は止める）
+    case MP_PIVOT_RIGHT:  Motor_Move(pwm, 0);     break;   // 左輪だけ前進（右輪は止める）
+  }
+}
+
+static void MinPwm_Abort(const char *message) {
+  Motor_Stop();
+  Job_Finish();
+  Serial.printf("[最低PWM] 走行しません: %s\n", message);
+}
+
+static void MinPwm_Begin(void) {
+  minPwmRunMode = minPwmMode;
+  minPwmRunPwm = minPwm;
+
+  Neck_Front();  // 走行中は首を正面・水平に固定する
+  minPwmBatteryIdle = Get_Battery_Voltage();
+  minPwmLastValidMs = 0;
+  minPwmLastCm = 0.0f;
+  minPwmStartCm = NAN;
+  minPwmSampleCount = 0;
+  job = JOB_MINPWM;
+  minPwmPhase = MPP_ARM;
+  phaseMs = millis();
+  Sonar_StartSeries(DRIVE_RANGE_INTERVAL_MS, phaseMs);
+
+  Serial.printf("[最低PWM] %s PWM=%d %dms 電池=%.2fV PCA9685 %dHz  首を正面・水平に固定（servo1=%d° servo2=%d°）\n",
+                MinPwmModeName(minPwmRunMode), minPwmRunPwm, MINPWM_RUN_MS, minPwmBatteryIdle,
+                PCA9685_FREQUENCY_HZ, servo1Angle, servo2Angle);
+  Serial.printf("  %dms後に動きます。どのキーでも即停止", MINPWM_ARM_MS);
+  if (minPwmRunMode == MP_FORWARD) Serial.printf("／%.0fcm未満でも即停止", SAFETY_STOP_CM);
+  Serial.println();
+}
+
+// 停止。停止後も少し測距を続けて、最終の距離を記録する
+static void MinPwm_Stop(MinPwmReason reason) {
+  Motor_Stop();
+  minPwmStopMs = millis();
+  minPwmReason = reason;
+  minPwmPhase = MPP_REST;
+}
+
+// 走行中（停止命令まで）の測距から、進んだ向きの速度（cm/s）を求める。求められなければ NAN
+// 前進は前方の壁に近づく速さ、後退は遠ざかる速さ。動き始めの立ち上がりを除くため MINPWM_SPEED_FROM_MS 以降を使う
+static float MinPwm_Speed(void) {
+  if (!MinPwmModeIsLinear(minPwmRunMode)) return NAN;
+  unsigned long runMs = minPwmStopMs - minPwmStartMs;
+  int first = -1, last = -1;
+  for (int i = 0; i < minPwmSampleCount; i++) {
+    if (minPwmSampleMs[i] < MINPWM_SPEED_FROM_MS || minPwmSampleMs[i] > runMs) continue;
+    if (first < 0) first = i;
+    last = i;
+  }
+  if (first < 0 || minPwmSampleMs[last] - minPwmSampleMs[first] < MINPWM_SPEED_SPAN_MS) return NAN;
+  float approach = (minPwmSampleCm[first] - minPwmSampleCm[last]) * 1000.0f
+                   / (float)(minPwmSampleMs[last] - minPwmSampleMs[first]);   // 近づく向きが正
+  return (minPwmRunMode == MP_FORWARD) ? approach : -approach;
+}
+
+static void MinPwm_Report(void) {
+  bool linear = MinPwmModeIsLinear(minPwmRunMode);
+  bool endValid = (minPwmLastValidMs != 0 && minPwmLastValidMs >= minPwmStopMs);
+  float endCm = endValid ? minPwmLastCm : NAN;
+
+  Serial.printf("[最低PWM結果] %s PWM=%d %dms 電池=%.2fV（走行前） PCA9685 %dHz 停止理由:%s\n",
+                MinPwmModeName(minPwmRunMode), minPwmRunPwm, MINPWM_RUN_MS, minPwmBatteryIdle,
+                PCA9685_FREQUENCY_HZ, MinPwmReasonName(minPwmReason));
+
+  if (isnan(minPwmStartCm) || isnan(endCm)) {
+    Serial.println("  前方の距離: 開始か終了のどちらかが測れなかったため変化は不明（目で見て判断してください）");
+  } else {
+    float change = endCm - minPwmStartCm;
+    Serial.printf("  前方の距離 %.1fcm → %.1fcm（変化 %+.1fcm）", minPwmStartCm, endCm, change);
+    if (linear) {
+      float moved = (minPwmRunMode == MP_FORWARD) ? -change : change;   // 進んだ向きへの移動量
+      if (moved >= MINPWM_MOVED_CM) {
+        Serial.printf("  → %sした（目安）\n", MinPwmModeName(minPwmRunMode));
+      } else {
+        Serial.printf("  → 動かなかった（目安。変化が%.1fcm未満）\n", MINPWM_MOVED_CM);
+      }
+    } else {
+      Serial.println("  （回転は参考。目で見て判断してください）");
+    }
+  }
+
+  float speed = MinPwm_Speed();
+  if (!isnan(speed)) {
+    Serial.printf("  速度 %.1fcm/s（動かし始め%dms以降の測距から）\n", speed, MINPWM_SPEED_FROM_MS);
+  } else if (linear) {
+    Serial.println("  速度: 求められませんでした（測距が足りない）");
+  }
+  Serial.printf("  次: u/d でPWM ±%d（いま %d）、g で実行、1〜6 でモード変更", MinPwmStep(minPwmMode), minPwm);
+  if (!linear) Serial.print("、回り始めたら h で回り続ける最低PWMを探す");
+  Serial.println();
+}
+
+// 走行中・準備中にキーが押されたときの処理
+static void MinPwm_OnKey(char c) {
+  bool isEol = (c == '\r' || c == '\n');
+  if (minPwmPhase == MPP_ARM) {
+    // ターミナルが改行を自動付加する場合、開始コマンドの直後に届く改行は無視する
+    if (isEol) return;
+    MinPwm_Abort("開始前にキー入力があったため中止しました");
+    FlushInput();
+  } else if (minPwmPhase == MPP_RUN) {
+    MinPwm_Stop(MPR_KEY);   // 改行を含め、どのキーでも即停止
+    FlushInput();
+  }
+  // 停止後の待ち中は、モーターは止まっているので入力は読み捨てる
+}
+
+static void MinPwm_Update(unsigned long now, bool hasEv, const SonarSample &ev) {
+  if (hasEv && ev.valid) {
+    minPwmLastCm = ev.cm;
+    minPwmLastValidMs = now;
+    if (minPwmPhase != MPP_ARM && ev.trigMs >= minPwmStartMs && minPwmSampleCount < MINPWM_SAMPLES_MAX) {
+      minPwmSampleMs[minPwmSampleCount] = ev.trigMs - minPwmStartMs;
+      minPwmSampleCm[minPwmSampleCount] = ev.cm;
+      minPwmSampleCount++;
+    }
+  }
+
+  switch (minPwmPhase) {
+    case MPP_ARM: {
+      if (now - phaseMs < MINPWM_ARM_MS) return;
+      bool haveCm = (minPwmLastValidMs != 0 && now - minPwmLastValidMs <= DRIVE_STALE_MS);
+      if (minPwmRunMode == MP_FORWARD) {
+        // 前進は前方の壁で止める安全策が要るので、測距できることが条件
+        if (!haveCm) {
+          MinPwm_Abort("測距できません（前方に壁を置く。近すぎる・遠すぎる・センサーを確認）");
+          return;
+        }
+        if (minPwmLastCm < SAFETY_STOP_CM) {
+          MinPwm_Abort("すでに10cm未満です。もっと離して置いてください");
+          return;
+        }
+      }
+      minPwmStartCm = haveCm ? minPwmLastCm : NAN;
+      minPwmStartMs = now;
+      MinPwm_Drive(minPwmRunMode, minPwmRunPwm);
+      minPwmPhase = MPP_RUN;
+      if (haveCm) {
+        Serial.printf("動き始め 前方 %.1fcm\n", minPwmStartCm);
+      } else {
+        Serial.println("動き始め 前方の距離は測れていません");
+      }
+      return;
+    }
+
+    case MPP_RUN:
+      // 安全確認を最優先にする。前進のみ、壁に近づくので 非常停止 → 測距途切れ を見る
+      if (minPwmRunMode == MP_FORWARD) {
+        if (hasEv && ev.valid && ev.cm < SAFETY_STOP_CM) {
+          MinPwm_Stop(MPR_EMERGENCY);
+          return;
+        }
+        if (now - minPwmLastValidMs > DRIVE_STALE_MS) {
+          MinPwm_Stop(MPR_NO_ECHO);
+          return;
+        }
+      }
+      if (now - minPwmStartMs >= MINPWM_RUN_MS) MinPwm_Stop(MPR_DONE);
+      return;
+
+    case MPP_REST:
+      if (now - minPwmStopMs < MINPWM_REST_MS) return;
+      Job_Finish();
+      MinPwm_Report();
+      return;
+  }
+}
+
+// ------------------------ 回り続ける最低PWM（動かし続けたままPWMを下げる）------------------------ //
+// 回転・片側旋回を、いま選んでいるPWMで回し始め、そのまま u/d で PWM を50ずつ変える。
+// 止まる直前（まだ回り続けていた最後）のPWMを目で見て探す。一度止まったら回り出しの値に戻るので、
+// 止まったら s かスペースで止めて、g の測定（回り始める最低PWM）に戻る。
+// 安全策：回転・片側旋回は壁に近づかないので測距は使わない。開始前のキー入力で中止／
+// d・u 以外のキー（s・スペースなど）で即停止（改行だけは無視。ターミナルが自動付加する場合に備える）／
+// HOLD_IDLE_MS キー入力がなければ自動停止。
+enum HoldPhase { HP_ARM, HP_RUN };
+
+static HoldPhase holdPhase = HP_ARM;
+static MinPwmMode holdMode = MP_ROTATE_LEFT;
+static int holdPwm = 0;
+static int holdStartPwm = 0;
+static int holdLowestPwm = 0;               // 回している間に下げた最低のPWM
+static unsigned long holdStartMs = 0;
+static unsigned long holdLastKeyMs = 0;
+static float holdBatteryIdle = NAN;
+
+static void Hold_Begin(void) {
+  if (MinPwmModeIsLinear(minPwmMode)) {
+    Serial.println("[回り続ける最低PWM] 回転・片側旋回（3〜6）を選んでから h を押してください");
+    return;
+  }
+  holdMode = minPwmMode;
+  holdPwm = minPwm;
+  holdStartPwm = minPwm;
+  holdLowestPwm = minPwm;
+
+  Neck_Front();  // 首を正面・水平に固定する
+  holdBatteryIdle = Get_Battery_Voltage();
+  job = JOB_HOLD;
+  holdPhase = HP_ARM;
+  phaseMs = millis();
+  Serial.printf("[回り続ける最低PWM] %s PWM=%d から回し続けます 電池=%.2fV PCA9685 %dHz  首を正面・水平に固定\n",
+                MinPwmModeName(holdMode), holdPwm, holdBatteryIdle, PCA9685_FREQUENCY_HZ);
+  Serial.printf("  %dms後に動きます。回っている間は d:PWM-%d  u:PWM+%d  s かスペース:停止（開始前はどのキーでも中止）\n",
+                MINPWM_ARM_MS, HOLD_STEP, HOLD_STEP);
+}
+
+static void Hold_Stop(const char *reason) {
+  Motor_Stop();
+  Serial.printf("[回り続ける最低PWM結果] %s 開始PWM=%d 最後のPWM=%d 下げた最低PWM=%d 経過%lums 停止理由:%s\n",
+                MinPwmModeName(holdMode), holdStartPwm, holdPwm, holdLowestPwm, millis() - holdStartMs, reason);
+  Serial.println("  ※「回り続けた最低PWM」は、止まった1つ前のPWM（上の t=…ms の行）から読み取ってください");
+  Job_Finish();
+}
+
+// キーで PWM を変えて、そのまま出力する
+static void Hold_SetPwm(int pwm, unsigned long now) {
+  holdPwm = constrain(pwm, HOLD_PWM_MIN, DRIVE_PWM_LIMIT);
+  if (holdPwm < holdLowestPwm) holdLowestPwm = holdPwm;
+  MinPwm_Drive(holdMode, holdPwm);
+  Serial.printf("  t=%lums PWM=%d%s\n", now - holdStartMs, holdPwm,
+                holdPwm == HOLD_PWM_MIN ? "（下限）" : (holdPwm == DRIVE_PWM_LIMIT ? "（上限）" : ""));
+}
+
+static void Hold_OnKey(char c) {
+  bool isEol = (c == '\r' || c == '\n');
+  if (isEol) return;
+  if (holdPhase == HP_ARM) {
+    Motor_Stop();
+    Job_Finish();
+    FlushInput();
+    Serial.println("[回り続ける最低PWM] 走行しません: 開始前にキー入力があったため中止しました");
+    return;
+  }
+  unsigned long now = millis();
+  holdLastKeyMs = now;
+  if (c == 'd') {
+    Hold_SetPwm(holdPwm - HOLD_STEP, now);
+  } else if (c == 'u') {
+    Hold_SetPwm(holdPwm + HOLD_STEP, now);
+  } else {
+    Hold_Stop("キー入力");
+    FlushInput();
+  }
+}
+
+static void Hold_Update(unsigned long now) {
+  if (holdPhase == HP_ARM) {
+    if (now - phaseMs < MINPWM_ARM_MS) return;
+    holdStartMs = now;
+    holdLastKeyMs = now;
+    holdPhase = HP_RUN;
+    MinPwm_Drive(holdMode, holdPwm);
+    Serial.printf("回り始め PWM=%d\n", holdPwm);
+    return;
+  }
+  if (now - holdLastKeyMs >= HOLD_IDLE_MS) Hold_Stop("キー入力がなかったため自動停止");
+}
+
 // ======================== 表示 ======================== //
 static void PrintHelp(void) {
   Serial.println("=== Nova M2案 測定ツール ===");
@@ -934,6 +1299,12 @@ static void PrintHelp(void) {
   Serial.println("[首の安定時間]  t:開始（正面に戻した直後から20ms間隔で1秒×5回）  a:振り幅を切り替え(20/40/55°)");
   Serial.println("[測距のばらつき]  v:20回測定  o:対象物を切り替え(手/服/壁0°/壁30°/壁45°)  n:想定距離を切り替え(10/30/60cm)");
   Serial.println("[停止距離]  f:前進して閾値で停止  +/-:PWM ±50  >/<:停止閾値 ±5cm");
+  Serial.println("[最低PWM]  1:前進 2:後退 3:左回転 4:右回転 5:左片側旋回 6:右片側旋回（選ぶと範囲の下限に戻る）");
+  Serial.printf("            u/d:PWM ±刻み（1,2は%d〜%d・%d刻み／3〜6は%d〜%d・%d刻み）  g:%dms動かして止める\n",
+                MINPWM_LINEAR_LO, MINPWM_LINEAR_HI, MINPWM_LINEAR_STEP, MINPWM_TURN_LO, MINPWM_TURN_HI, MINPWM_TURN_STEP,
+                MINPWM_RUN_MS);
+  Serial.printf("[回り続ける最低PWM]  h:いまのモード（3〜6）とPWMで回し続ける  u/d:PWM ±%d（回したまま）  s かスペース:停止（%d秒無入力でも停止）\n",
+                HOLD_STEP, HOLD_IDLE_MS / 1000);
   Serial.println("[その他]  p:現在の設定を表示  ?:この一覧を表示");
   Serial.println("測定中にキーを押すと中断します。結果は measurements.md 用の表の行でも出力します");
   Serial.printf("走行の安全策: 超音波%.0fcm未満で即停止／走行中はどのキーでも即停止／首は正面・水平に固定／\n", SAFETY_STOP_CM);
@@ -948,6 +1319,8 @@ static void PrintStatus(void) {
                 TARGET_NAMES[targetIndex], TARGET_DISTANCES_CM[distanceIndex], SWING_AMPLITUDES_DEG[amplitudeIndex]);
   Serial.printf("停止距離: PWM=%d(上限%d) 閾値=%dcm  PCA9685=%dHz 電池=%.2fV\n",
                 drivePwm, DRIVE_PWM_LIMIT, stopThresholdCm, PCA9685_FREQUENCY_HZ, Get_Battery_Voltage());
+  Serial.printf("最低PWM: モード=%s PWM=%d（範囲%d〜%d、%d刻み）\n",
+                MinPwmModeName(minPwmMode), minPwm, MinPwmLo(minPwmMode), MinPwmHi(minPwmMode), MinPwmStep(minPwmMode));
 }
 
 // servo2 の角度を「水平角」として採用し、measurements.md 用の行を出す
@@ -1019,6 +1392,30 @@ static void HandleCommand(char c) {
       stopThresholdCm = max(stopThresholdCm - STOP_THRESHOLD_STEP_CM, STOP_THRESHOLD_MIN_CM);
       Serial.printf("停止閾値=%dcm\n", stopThresholdCm);
       break;
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+      minPwmMode = (MinPwmMode)(c - '1');
+      minPwm = MinPwmLo(minPwmMode);
+      Serial.printf("最低PWM: モードを「%s」にしました（PWM=%d に戻しました）\n", MinPwmModeName(minPwmMode), minPwm);
+      break;
+    case 'u':
+      minPwm = min(minPwm + MinPwmStep(minPwmMode), MinPwmHi(minPwmMode));
+      Serial.printf("最低PWM: %s PWM=%d%s\n", MinPwmModeName(minPwmMode), minPwm, minPwm == MinPwmHi(minPwmMode) ? "（上限）" : "");
+      break;
+    case 'd':
+      minPwm = max(minPwm - MinPwmStep(minPwmMode), MinPwmLo(minPwmMode));
+      Serial.printf("最低PWM: %s PWM=%d%s\n", MinPwmModeName(minPwmMode), minPwm, minPwm == MinPwmLo(minPwmMode) ? "（下限）" : "");
+      break;
+    case 'g':
+      MinPwm_Begin();
+      break;
+    case 'h':
+      Hold_Begin();
+      break;
     case 's':
       Serial.println("停止しています（走行中はどのキーでも停止します）");
       break;
@@ -1038,6 +1435,14 @@ static void OnKey(char c) {
   switch (job) {
     case JOB_DRIVE:
       Drive_OnKey(c);
+      return;
+
+    case JOB_MINPWM:
+      MinPwm_OnKey(c);
+      return;
+
+    case JOB_HOLD:
+      Hold_OnKey(c);
       return;
 
     case JOB_SETTLE:
@@ -1095,6 +1500,12 @@ void loop() {
       break;
     case JOB_DRIVE:
       Drive_Update(now, hasEv, ev);
+      break;
+    case JOB_MINPWM:
+      MinPwm_Update(now, hasEv, ev);
+      break;
+    case JOB_HOLD:
+      Hold_Update(now);
       break;
     case JOB_IDLE:
       break;
