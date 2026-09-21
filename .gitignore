@@ -15,3 +15,6 @@ Thumbs.db
 
 # 環境依存
 *.log
+
+# 個人の環境の設定
+docs/nova2.code-workspace
