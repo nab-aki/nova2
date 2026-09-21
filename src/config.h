@@ -34,7 +34,8 @@
 #define MOTOR_ROTATE_HOLD_PWM       1000    // その場回転の回り続ける値。実測 850（左右とも）× 1.12 ≒ 952 → 1000
 #define MOTOR_PIVOT_KICK_PWM        1000    // 片側旋回の動き出し。実測 左右とも 850 × 1.12 ≒ 952 → 1000
 #define MOTOR_PIVOT_HOLD_PWM        900     // 片側旋回の回り続ける値。実測 左800・右750 の大きい方 × 1.12 ≒ 896 → 900
-#define MOTOR_TURN_KICK_MS          300     // 【仮値・未測定】キックを出す時間。ID25 の実装時に目で見て詰める
+#define MOTOR_ROTATE_KICK_MS        300     // 【仮値・未測定】その場回転のキックを出す時間。実機で詰める
+#define MOTOR_PIVOT_KICK_MS         300     // 【仮値・未測定】片側旋回のキックを出す時間（調整キー用に2つに分けた）
 
 // ------------------------ 首サーボ ------------------------ //
 #define SERVO1_FRONT_DEG            84      // 実測：servo1（左右）の正面
@@ -151,6 +152,17 @@
 // 【いまは 1】回転角の測定中のため。測り終えたら 0 に戻すこと（5分間の試験の前など）。
 #define DEBUG_START_PAUSED          1
 #define DEBUG_KEY_REPEAT_MS         250     // 同じキーがこれより短い間隔で続いたら、押しっぱなしのリピートとみなして捨てる
+#define DEBUG_TUNE_REPEAT_MS        60      // 回転の調整キー（q a w s e d r f）用。連続で押せるよう短くしてある
+// 回転の調整キー（一時停止中だけ効く）の刻みと範囲。値は実行時の変更で、書き込み直すと元に戻る
+#define DEBUG_TUNE_STEP_MS_MIN      100     // 1ステップの時間
+#define DEBUG_TUNE_STEP_MS_MAX      3000
+#define DEBUG_TUNE_STEP_MS_STEP     100
+#define DEBUG_TUNE_KICK_MS_MIN      0       // キックの時間（0 ならキックなしで保持PWMから始める）
+#define DEBUG_TUNE_KICK_MS_MAX      2000
+#define DEBUG_TUNE_KICK_MS_STEP     50
+#define DEBUG_TUNE_PWM_MIN          500     // キック・保持のPWM（実測の最低は片側旋回 750。下も試せるよう広げた）
+#define DEBUG_TUNE_PWM_MAX          MOTOR_PWM_LIMIT
+#define DEBUG_TUNE_PWM_STEP         50
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
 
@@ -183,7 +195,7 @@
 #define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
                                             // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
-#define TROUBLE_TURN_STEP_MS        500     // 1回に回る時間（うちキック MOTOR_TURN_KICK_MS）
+#define TROUBLE_TURN_STEP_MS        500     // 1回に回る時間（うちキック MOTOR_ROTATE_KICK_MS）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
 #define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数（1ステップ30°の仮定。未測定）
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間

@@ -39,7 +39,7 @@ ID9「気づく」で障害物に気づいて止まり、気づいた瞬間の�
    - 差が `TROUBLE_SIDE_DIFF_CM`（10cm）未満で甲乙つけがたいときは、
      前回と反対側を選ぶ（毎回同じ側に回って、同じところを往復しないため）。
 4. **少し回る**：選んだ側へ**その場回転**（壁の前なので片側旋回は使わない）。
-   1回の回転は `TROUBLE_TURN_STEP_MS`（500ms。うちキック300ms・保持200ms）。
+   1回の回転は `TROUBLE_TURN_STEP_MS`（初期500ms。うちキック `MOTOR_ROTATE_KICK_MS` 300ms・保持200ms）。実機では1ステップで約6°しか回らなかったので、デバッグの調整キーで値を探している（25_wander.md）。
 5. **止めて正面を測る**：回転を止め、`TROUBLE_CHECK_SETTLE_MS`（200ms）待ってから
    `Obstacle_Reset()` を呼び、履歴が5回たまる（`Obstacle_IsReady`）まで待って判定する
    （下記「空いたの基準」）。
@@ -145,7 +145,7 @@ ID9 は「気づいた瞬間」だけを受け持ち、そのあとの行動は 
 | TROUBLE_BACK_RAMP_MS | 300 | 後退の加速にかける時間 |
 | TROUBLE_SIDE_DIFF_CM | 10.0 | 左右の差がこれ未満なら「甲乙つけがたい」 |
 | TROUBLE_CLEAR_CM | 46.0 | 正面が「空いた」と認める距離（上記。共通部品の 36＋10 と同じ値にしてある） |
-| TROUBLE_TURN_STEP_MS | 500 | 1回に回る時間（うちキック `MOTOR_TURN_KICK_MS` 300ms） |
+| TROUBLE_TURN_STEP_MS | 500 | 1回に回る時間（うちキック `MOTOR_ROTATE_KICK_MS` 300ms） |
 | TROUBLE_CHECK_SETTLE_MS | 200 | 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで） |
 | TROUBLE_MAX_STEPS | 12 | 「一周した」とみなす回転の回数 |
 | TROUBLE_GIVEUP_REST_MS | 5000 | 一周しても空かないときに休む時間 |

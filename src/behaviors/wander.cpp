@@ -5,6 +5,7 @@
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
+#include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
 const char *WanderBehavior::StateName(State state) {
@@ -64,12 +65,12 @@ void WanderBehavior::Decide(unsigned long nowMs) {
     pendingPivot_ = true;
     pivotKind_ = TURN_PIVOT_RIGHT;
     Log_Printf("うろうろ", "左が近い（%.1fcm < %.0fcm）ので右へ片側旋回 %lums",
-               leftCm_, WANDER_SIDE_NEAR_CM, (unsigned long)WANDER_AVOID_PIVOT_MS);
+               leftCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_PIVOT_RIGHT));
   } else if (rightCm_ < WANDER_SIDE_NEAR_CM && leftCm_ > rightCm_) {
     pendingPivot_ = true;
     pivotKind_ = TURN_PIVOT_LEFT;
     Log_Printf("うろうろ", "右が近い（%.1fcm < %.0fcm）ので左へ片側旋回 %lums",
-               rightCm_, WANDER_SIDE_NEAR_CM, (unsigned long)WANDER_AVOID_PIVOT_MS);
+               rightCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_PIVOT_LEFT));
   } else if (leftCm_ < WANDER_SIDE_NEAR_CM && rightCm_ < WANDER_SIDE_NEAR_CM) {
     Log_Printf("うろうろ", "左右とも近い（左%.1fcm 右%.1fcm）。避ける先がないのでそのまま前進",
                leftCm_, rightCm_);
@@ -147,7 +148,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_AVOID:
-      if (nowMs - stateStartMs_ < WANDER_AVOID_PIVOT_MS) {
+      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(pivotKind_)) {
         return;
       }
       Motion_StopTurn(nowMs);

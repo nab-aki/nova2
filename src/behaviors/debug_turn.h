@@ -1,6 +1,7 @@
 // デバッグ：回転角の測定（#0。docs/specs/25_wander.md「回転角を測るためのデバッグキー」）
 // シリアルの 3〜6 で、その場回転・片側旋回を1ステップだけ実行する。
 // 1ステップで何度回るかを実測して、WANDER_AVOID_PIVOT_MS と TROUBLE_MAX_STEPS を詰めるための道具。
+// 1ステップの間の電池電圧の最低値も測る（大電流による実際の電圧降下かを見るため）。
 //
 // 車体レイヤーのいちばん高い優先度（PRIORITY_DEBUG_TURN）で、受け付けたときだけ発動する。
 // 受け付けてよいかの判断（停止中か・ID15 が動いていないか・持ち上げられていないか）は
@@ -28,12 +29,20 @@ class DebugTurnBehavior : public Behavior {
 
  private:
   void begin(unsigned long nowMs);
+  void sampleBattery(unsigned long nowMs);
+  void reportBattery();
 
   bool requested_ = false;
   bool running_ = false;
   TurnKind kind_ = TURN_ROTATE_LEFT;
   unsigned long durationMs_ = 0;
   unsigned long startMs_ = 0;
+
+  // 1ステップの間の電池電圧（ADCを毎ループ読む。状態行の500ms間隔では、短いステップの底を逃すため）
+  float batteryIdleV_ = 0.0f;     // 動き出す前
+  float batteryMinV_ = 0.0f;      // ステップ中の最低
+  unsigned long batteryMinAtMs_ = 0;   // その時刻（動き出しからの経過）
+  int batterySamples_ = 0;
 };
 
 #endif // NOVA_BEHAVIORS_DEBUG_TURN_H

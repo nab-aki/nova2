@@ -5,6 +5,7 @@
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
+#include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
 const char *TroubleBehavior::StateName(State state) {
@@ -150,7 +151,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_TURN:
-      if (nowMs - stateStartMs_ < TROUBLE_TURN_STEP_MS) {
+      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(turnKind_)) {
         return;
       }
       Motion_StopTurn(nowMs);

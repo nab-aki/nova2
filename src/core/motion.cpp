@@ -5,6 +5,7 @@
 #include "../hal/hal_motor.h"
 #include "obstacle.h"
 #include "smoother.h"
+#include "turn_tuning.h"
 
 static Smoother speedSmoother(0.0f);
 static unsigned long lastUpdateMs = 0;
@@ -53,12 +54,17 @@ static bool TurnIsPivot(TurnKind kind) {
   return kind == TURN_PIVOT_LEFT || kind == TURN_PIVOT_RIGHT;
 }
 
+// キック・保持のPWMとキックの時間は、実行時の調整値（core/turn_tuning.*）を読む
 static int TurnKickPwm(TurnKind kind) {
-  return TurnIsPivot(kind) ? MOTOR_PIVOT_KICK_PWM : MOTOR_ROTATE_KICK_PWM;
+  return TurnTuning_Get(kind).kickPwm;
 }
 
 static int TurnHoldPwm(TurnKind kind) {
-  return TurnIsPivot(kind) ? MOTOR_PIVOT_HOLD_PWM : MOTOR_ROTATE_HOLD_PWM;
+  return TurnTuning_Get(kind).holdPwm;
+}
+
+static unsigned long TurnKickMs(TurnKind kind) {
+  return (unsigned long)TurnTuning_Get(kind).kickMs;
 }
 
 // 回転をやめる（内部用。停止の記録を出すかどうかを選べる）
@@ -104,12 +110,17 @@ void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
   speedSmoother.reset(0.0f);   // 直進の目標は捨てる
   turning = true;
   turnKind = kind;
-  turnKicking = true;
+  turnKicking = TurnKickMs(kind) > 0;   // キックの時間が0なら、保持のPWMから始める
   turnStartMs = nowMs;
   Obstacle_Reset();            // 回り始める前の測距は、別の方向を向いていたときの値
-  ApplyTurn(kind, TurnKickPwm(kind));
-  Log_Printf("動き", "%s キック PWM%d（%lums）",
-             Motion_TurnName(kind), TurnKickPwm(kind), (unsigned long)MOTOR_TURN_KICK_MS);
+  if (turnKicking) {
+    ApplyTurn(kind, TurnKickPwm(kind));
+    Log_Printf("動き", "%s キック PWM%d（%lums）",
+               Motion_TurnName(kind), TurnKickPwm(kind), TurnKickMs(kind));
+  } else {
+    ApplyTurn(kind, TurnHoldPwm(kind));
+    Log_Printf("動き", "%s キックなし 保持 PWM%d", Motion_TurnName(kind), TurnHoldPwm(kind));
+  }
 }
 
 void Motion_StopTurn(unsigned long nowMs) {
@@ -131,7 +142,7 @@ TurnKind Motion_GetTurnKind(void) {
 void Motion_Update(unsigned long nowMs) {
   // 回転中は直進の出力をしない。キック→保持の切り替えは、間隔を待たずに毎ループ見る
   if (turning) {
-    if (turnKicking && nowMs - turnStartMs >= MOTOR_TURN_KICK_MS) {
+    if (turnKicking && nowMs - turnStartMs >= TurnKickMs(turnKind)) {
       turnKicking = false;
       ApplyTurn(turnKind, TurnHoldPwm(turnKind));
       Log_Printf("動き", "%s 保持 PWM%d", Motion_TurnName(turnKind), TurnHoldPwm(turnKind));

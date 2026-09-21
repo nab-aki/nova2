@@ -6,7 +6,8 @@
 //   ・塞がったままなら、後退して左右を確かめ、その場回転で向きを変える（ID15）
 //   ・持ち上げたら（ライントラッキング111）すぐモーターを止める（安全層）
 //   ・シリアル（115200bps）に、測距値・判定・首の状態・モーター状態を出力する
-//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる。p でうろうろを一時停止／再開（? でキー一覧）
+//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる。p でうろうろを一時停止／再開
+//     一時停止中は q a w s e d r f で回転の調整値（時間・キック・PWM）を変えられる（? でキー一覧）
 //
 // 構成：hal/（ハードウェア操作）→ core/（センサー集約・首・障害物・安全・動き・表情・調停）
 //       → behaviors/（振る舞い）
@@ -28,6 +29,7 @@
 #include "core/obstacle.h"
 #include "core/safety.h"
 #include "core/sensors.h"
+#include "core/turn_tuning.h"
 #include "hal/hal.h"
 #include "hal/hal_log.h"
 
@@ -91,12 +93,25 @@ static void PrintStatus(unsigned long nowMs) {
 
 // ------------------------ デバッグキー（回転角の測定用）------------------------ //
 
+// 回転の調整キーの対象。最後に押した回転キー（3・4 ならその場回転、5・6 なら片側旋回）か、g で選んだほう
+static bool tunePivot = false;
+
 static void PrintKeyHelp(void) {
-  Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %lums）", (unsigned long)TROUBLE_TURN_STEP_MS);
-  Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %lums）", (unsigned long)WANDER_AVOID_PIVOT_MS);
-  Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます");
+  Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %dms）", TurnTuning_StepMs(TURN_ROTATE_LEFT));
+  Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %dms）", TurnTuning_StepMs(TURN_PIVOT_LEFT));
+  Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
   Log_Printf("キー", "p:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
-  Log_Printf("キー", "現在：%s", Pause_IsPaused() ? "一時停止中" : "うろうろ中");
+  Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
+  Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
+             DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
+             DEBUG_TUNE_KICK_MS_STEP, DEBUG_TUNE_KICK_MS_MIN, DEBUG_TUNE_KICK_MS_MAX);
+  Log_Printf("キー", "  e/d:キックのPWM ±%d  r/f:保持のPWM ±%d（どちらも%d〜%d）",
+             DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_MIN, DEBUG_TUNE_PWM_MAX);
+  Log_Printf("キー", "  g:調整の対象を切り替え（その場回転⇔片側旋回。3〜6 を押してもそのグループになる）  v:両方の現在の値を表示");
+  Log_Printf("キー", "現在：%s／調整の対象：%s", Pause_IsPaused() ? "一時停止中" : "うろうろ中",
+             tunePivot ? "片側旋回" : "その場回転");
+  TurnTuning_Print(false, false);
+  TurnTuning_Print(true, false);
 }
 
 // 止まっていて、立て直しの最中でも持ち上げ中でもないときだけ受け付ける
@@ -122,6 +137,26 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
   debugTurnBehavior.request(kind, durationMs);
 }
 
+// 回転の調整キー。一時停止中だけ効き、回転の最中は受け付けない
+static void TuneKey(TurnTuneItem item, int direction) {
+  if (!Pause_IsPaused()) {
+    Log_Printf("調整", "一時停止中（p）にしてから押してください");
+    return;
+  }
+  if (debugTurnBehavior.isBusy() || Motion_IsTurning()) {
+    Log_Printf("調整", "回転の最中なので無視します");
+    return;
+  }
+  if (!TurnTuning_Adjust(tunePivot, item, direction)) {
+    Log_Printf("調整", "範囲の端です");
+  }
+  TurnTuning_Print(tunePivot, true);
+}
+
+static bool IsTuneKey(char c) {
+  return c == 'q' || c == 'a' || c == 'w' || c == 's' || c == 'e' || c == 'd' || c == 'r' || c == 'f';
+}
+
 static void HandleSerialKeys(void) {
   static char lastKey = 0;
   static unsigned long lastKeyMs = 0;
@@ -135,18 +170,37 @@ static void HandleSerialKeys(void) {
     // 同じキーが DEBUG_KEY_REPEAT_MS 以内に続いたら、リピートとみなして捨てる
     // （1ステップだけ回す・一時停止を切り替える、が押しっぱなしで繰り返されないように）。
     unsigned long now = millis();
-    bool repeat = (c == lastKey) && (now - lastKeyMs < DEBUG_KEY_REPEAT_MS);
+    // 調整キー（q a w s e d r f）は、連続で押して値を動かしたいので、リピート判定の間隔を短くする
+    unsigned long repeatMs = IsTuneKey(c) ? DEBUG_TUNE_REPEAT_MS : DEBUG_KEY_REPEAT_MS;
+    bool repeat = (c == lastKey) && (now - lastKeyMs < repeatMs);
     lastKey = c;
     lastKeyMs = now;   // リピートが続く間は延長して、途切れるまで捨て続ける
     if (repeat) {
       continue;
     }
     switch (c) {
-      case '3': RequestDebugTurn(TURN_ROTATE_LEFT, TROUBLE_TURN_STEP_MS);   break;
-      case '4': RequestDebugTurn(TURN_ROTATE_RIGHT, TROUBLE_TURN_STEP_MS);  break;
-      case '5': RequestDebugTurn(TURN_PIVOT_LEFT, WANDER_AVOID_PIVOT_MS);   break;
-      case '6': RequestDebugTurn(TURN_PIVOT_RIGHT, WANDER_AVOID_PIVOT_MS);  break;
+      case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT));   break;
+      case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
+      case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT));     break;
+      case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT));   break;
       case 'p': Pause_Toggle(); break;
+      case 'q': TuneKey(TUNE_STEP_MS, +1);  break;
+      case 'a': TuneKey(TUNE_STEP_MS, -1);  break;
+      case 'w': TuneKey(TUNE_KICK_MS, +1);  break;
+      case 's': TuneKey(TUNE_KICK_MS, -1);  break;
+      case 'e': TuneKey(TUNE_KICK_PWM, +1); break;
+      case 'd': TuneKey(TUNE_KICK_PWM, -1); break;
+      case 'r': TuneKey(TUNE_HOLD_PWM, +1); break;
+      case 'f': TuneKey(TUNE_HOLD_PWM, -1); break;
+      case 'g':
+        tunePivot = !tunePivot;
+        Log_Printf("調整", "調整の対象を「%s」にしました", tunePivot ? "片側旋回" : "その場回転");
+        TurnTuning_Print(tunePivot, false);
+        break;
+      case 'v':
+        TurnTuning_Print(false, true);
+        TurnTuning_Print(true, true);
+        break;
       case '?': PrintKeyHelp(); break;
       case '\r':
       case '\n':

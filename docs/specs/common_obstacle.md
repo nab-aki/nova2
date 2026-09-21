@@ -97,7 +97,7 @@ ID には紐づかない共通部品（#0）。ID9・ID15・ID25・ID26 が共�
 モーターに書き込む場所を1つに保つため、回転も `src/core/motion.*` が持つ
 （`Motion_StartTurn` / `Motion_StopTurn` / `Motion_IsTurning`）。
 実測（docs/measurements.md）のとおり動き出しに大きなPWMが要るので、
-キック（`MOTOR_TURN_KICK_MS`）→ 保持 の2段階で出す。生のPWMなので `Motor_DrivePwm()` を使う。
+キック（`MOTOR_ROTATE_KICK_MS`・`MOTOR_PIVOT_KICK_MS`）→ 保持 の2段階で出す。生のPWMなので `Motor_DrivePwm()` を使う。
 回転の開始時と終了時に `Obstacle_Reset()` を呼ぶ（回っている間は別の方向を見ているため）。
 
 詳しくは [25_wander.md](25_wander.md) の「回転」を参照。
@@ -118,7 +118,7 @@ ID には紐づかない共通部品（#0）。ID9・ID15・ID25・ID26 が共�
 | MOTOR_PWM_MIN | 675 | 前進の最低PWM。実測の動き出し 600 に電池低下の余裕を足した値（1300→700→675。docs/measurements.md） |
 | SAFETY_LIFT_TRACK | 0x07 | 持ち上げと判定するライントラッキングの値（111） |
 | SAFETY_LIFT_CLEAR_COUNT | 3 | 床に戻ったと認めるまでの連続読み取り回数（約300ms） |
-| MOTOR_TURN_KICK_MS | 300 | 回転のキック（動き出し）を出す時間（**未測定の仮値**） |
+| MOTOR_ROTATE_KICK_MS / MOTOR_PIVOT_KICK_MS | 300 / 300 | 回転のキック（動き出し）を出す時間（**未測定の仮値**） |
 
 ## 初期値の根拠
 

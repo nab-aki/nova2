@@ -36,7 +36,8 @@ bool Motion_IsAtTarget(void);     // 目標速度に到達したか
 
 // ------------------------ 回転（その場回転・片側旋回）------------------------ //
 // 実測（docs/measurements.md）のとおり、回転・旋回は動き出しに大きなPWMが要るが、
-// 回り出せば下げても回り続ける。キック（MOTOR_TURN_KICK_MS）→ 保持 の2段階で出す。
+// 回り出せば下げても回り続ける。キック（MOTOR_*_KICK_MS）→ 保持 の2段階で出す。
+// キック・保持のPWMと時間は core/turn_tuning.* の値（起動時は config.h。デバッグキーで変えられる）。
 // 直進の目標速度は0に戻す（回転中に Motion_SetSpeed を呼ぶと回転は取り消される）。
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
 void Motion_StopTurn(unsigned long nowMs);
