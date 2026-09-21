@@ -6,6 +6,16 @@
 
 #include <Arduino.h>
 
+// 回転の種類（docs/specs/25_wander.md「回転」）。
+// その場回転＝左右を逆に回す（中心が動かない。壁の前での方向転換）。
+// 片側旋回＝片側だけ前進させる（大きく弧を描く。広い場所での向き変え）。
+enum TurnKind {
+  TURN_ROTATE_LEFT,
+  TURN_ROTATE_RIGHT,
+  TURN_PIVOT_LEFT,
+  TURN_PIVOT_RIGHT
+};
+
 void Motion_Setup(void);
 
 // 目標速度（正規化速度 -1.0〜1.0）を設定し、rampMs かけて近づける
@@ -23,5 +33,16 @@ void Motion_Update(unsigned long nowMs);
 float Motion_GetSpeed(void);      // なめらか化後の現在速度（揺らぎ除く）
 float Motion_GetTarget(void);
 bool Motion_IsAtTarget(void);     // 目標速度に到達したか
+
+// ------------------------ 回転（その場回転・片側旋回）------------------------ //
+// 実測（docs/measurements.md）のとおり、回転・旋回は動き出しに大きなPWMが要るが、
+// 回り出せば下げても回り続ける。キック（MOTOR_TURN_KICK_MS）→ 保持 の2段階で出す。
+// 直進の目標速度は0に戻す（回転中に Motion_SetSpeed を呼ぶと回転は取り消される）。
+void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
+void Motion_StopTurn(unsigned long nowMs);
+bool Motion_IsTurning(void);
+bool Motion_IsPivoting(void);     // 片側旋回か（車体が前へふくらむので、安全層が止める対象）
+TurnKind Motion_GetTurnKind(void);
+const char *Motion_TurnName(TurnKind kind);
 
 #endif // NOVA_CORE_MOTION_H

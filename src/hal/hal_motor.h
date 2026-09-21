@@ -11,6 +11,11 @@ void Motor_Setup(void);
 // 左側（M1, M2）と右側（M3, M4）の速さを指定する。同符号で直進、逆符号でその場回転。
 void Motor_Drive(float left, float right);
 
+// 生のPWM（符号付き。正=前進）で左右を指定する。
+// 回転・片側旋回のように、正規化速度ではなく実測のPWM値そのもので出したいときに使う
+// （最低PWMの下限を通さないので、呼ぶ側が動く値を渡すこと）。
+void Motor_DrivePwm(int leftPwm, int rightPwm);
+
 // 全輪を止める
 void Motor_Stop(void);
 

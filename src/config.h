@@ -21,13 +21,15 @@
 // 使えるよう、実測値に ×1.12（7.85÷7.0）を掛けて、前進・後退は25刻み、回転・旋回は50刻みに切り上げた。
 // 7.0V は仮の値（電池の動作下限は未調査。ID22 で決めたら見直す）。
 #define MOTOR_PWM_MIN               675     // 前進の最低PWM。実測：動き出し 600 × 1.12 ≒ 672 → 675
-#define MOTOR_PWM_MIN_BACKWARD      650     // 後退の最低PWM。実測：動き出し 575 × 1.12 ≒ 644 → 650（HALは未対応。ID25で使う）
+#define MOTOR_PWM_MIN_BACKWARD      650     // 後退の最低PWM。実測：動き出し 575 × 1.12 ≒ 644 → 650
+                                            // 参考値。正規化速度の換算は前後とも MOTOR_PWM_MIN(675) を下限にするが、
+                                            // 675 > 650 なので後退も必ず動く（ID15 の後退はこの換算のまま使う）
 #define MOTOR_PWM_LIMIT             2000    // 安全のための上限（tools/pwm_test と同じ）
 #define MOTOR_SPEED_EPSILON         0.01f   // 正規化速度（-1〜1）がこれ未満なら停止として扱う
 
 // その場回転・片側旋回（ID25）は、4輪の横滑りのため動き出しに大きな力が要る。ただし回り出せば下げても回り続ける。
 // そこで「動き出し（キック）」のPWMを短時間出してから、「回り続ける」PWMに下げる。
-// 値は正規化速度ではなく生のPWM（HAL に生PWMで出す経路は ID25 の実装で足す）。
+// 値は正規化速度ではなく生のPWM。Motor_DrivePwm() で出し、段階の管理は core/motion.* が行う。
 #define MOTOR_ROTATE_KICK_PWM       1150    // その場回転の動き出し。実測 左1000・右950 の大きい方 × 1.12 ≒ 1120 → 1150（左右同じ値）
 #define MOTOR_ROTATE_HOLD_PWM       1000    // その場回転の回り続ける値。実測 850（左右とも）× 1.12 ≒ 952 → 1000
 #define MOTOR_PIVOT_KICK_PWM        1000    // 片側旋回の動き出し。実測 左右とも 850 × 1.12 ≒ 952 → 1000
@@ -126,17 +128,57 @@
 //   速度の揺らぎは入らない。
 #define CRUISE_SPEED                0.0385f // 巡航の正規化速度（PWM 726 相当）
 
+// ------------------------ 安全層：持ち上げ ------------------------ //
+// 実測：床では 000、持ち上げると 111（docs/measurements.md）。
+// 止めるのは1回で即座に、動いてよくするのは 111 以外が続いてから、と非対称にする
+// （宙に浮いたまま車輪が回るのを避けるため）。数えるのは「読み取った回数」で、
+// ライントラッキングは TRACK_READ_INTERVAL_MS ごとにしか読まない。
+#define SAFETY_LIFT_TRACK           0x07    // 111（左・中央・右すべて）
+#define SAFETY_LIFT_CLEAR_COUNT     3       // 床に戻ったと認めるまでの連続読み取り回数（約300ms）
+
 // ------------------------ 調停の優先度 ------------------------ //
-// 大きいほど優先。安全 > 反応 > 気まま の順で、数値の基準は docs/decisions.md に積み上げる。
+// 大きいほど優先。レイヤー（車体／目）ごとに比べるので、車体と目で同じ数値があってもよい。
+// 車体：デバッグ回転 > 困る > 気づく > うろうろ（安全 > 反応 > 気まま）。
+// 数値の基準は docs/decisions.md に積み上げる。
+#define PRIORITY_WANDER             20      // 車体：ID25 うろうろ（既定の振る舞い）
+#define PRIORITY_NOTICE             30      // 車体：ID9 気づく（20 から変更）
+#define PRIORITY_TROUBLE            40      // 車体：ID15 障害物で困る
+#define PRIORITY_DEBUG_TURN         50      // 車体：回転角を測るデバッグキー（3〜6）
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
-#define PRIORITY_NOTICE             20      // 車体：ID9 気づく
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
 
 // ------------------------ ID9 気づく ------------------------ //
 #define NOTICE_REST_MS              3000    // 止まっている時間
 #define NOTICE_CRUISE_MS            1500    // 巡航を保つ時間
 #define NOTICE_WIDE_MS              1200    // 気づいたとき目を見開いている時間
-#define NOTICE_HOLD_MS              800     // 障害物がなくなってから、再発進を考え始めるまでの間
+#define NOTICE_HOLD_MS              800     // 障害物がなくなってから、うろうろに戻るまでの間
 #define NOTICE_STOP_REPORT_MS       800     // 気づいてから、停止後の距離をシリアルに出すまでの待ち
+#define NOTICE_REACT_MS             1200    // 気づいた反応が終わるまで（この後 ID15 が引き継ぐ）。
+                                            // 見開き 1200ms と停止後の報告 800ms の長いほう
+
+// ------------------------ ID25 うろうろ ------------------------ //
+// 見回しの角度：servo1 は 20〜140°・正面 84° なので、左右対称に取れるのは ±56° まで。
+// 実測の安定時間（±55°で最長160ms）にも収まる ±50° にした（docs/specs/25_wander.md）。
+#define WANDER_REST_MS              800     // 止まってから見回しを始めるまでの「ため」
+#define WANDER_SCAN_PAN_DEG         50      // 左右を見る角度（正面±）。servo1 は 34〜134°
+#define WANDER_SCAN_SAMPLES         3       // 1方向あたりの測距回数（最も近い値を採る）
+#define WANDER_SIDE_NEAR_CM         40.0f   // 横がこれより近ければ、反対側へ向きを変える
+                                            // 斜め50°の距離なので、壁が平行なら横の実距離は 40×sin50°≒31cm
+#define WANDER_AVOID_PIVOT_MS       500     // 横を避けるための片側旋回の時間
+#define WANDER_RUN_MIN_MS           1000    // 巡航を保つ時間（ランダムの下限）
+#define WANDER_RUN_MAX_MS           3000    // 同（上限）
+
+// ------------------------ ID15 障害物で困る ------------------------ //
+#define TROUBLE_BACK_SPEED          (-CRUISE_SPEED)  // 後退の速度（巡航と同じ速さで逆向き）
+#define TROUBLE_BACK_MS             500     // 後退する時間（推定10〜15cm。実機で測って詰める）
+#define TROUBLE_BACK_RAMP_MS        300     // 後退の加速・減速にかける時間
+#define TROUBLE_SIDE_DIFF_CM        10.0f   // 左右の差がこれ未満なら「甲乙つけがたい」
+#define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
+                                            // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
+                                            // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
+#define TROUBLE_TURN_STEP_MS        500     // 1回に回る時間（うちキック MOTOR_TURN_KICK_MS）
+#define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
+#define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数（1ステップ30°の仮定。未測定）
+#define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間
 
 #endif // NOVA_CONFIG_H

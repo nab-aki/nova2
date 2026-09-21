@@ -3,10 +3,17 @@
 #include "../config.h"
 #include "../hal/hal_log.h"
 #include "../hal/hal_motor.h"
+#include "obstacle.h"
 #include "smoother.h"
 
 static Smoother speedSmoother(0.0f);
 static unsigned long lastUpdateMs = 0;
+
+// 回転（その場回転・片側旋回）。直進とは同時に使わない
+static bool turning = false;
+static TurnKind turnKind = TURN_ROTATE_LEFT;
+static bool turnKicking = false;      // キック（動き出し）の最中か
+static unsigned long turnStartMs = 0;
 
 // 直進中の速度の揺らぎ。周期の違う2つの波を重ねて、機械的に見えないようにする
 static float Wobble(unsigned long nowMs, float speed) {
@@ -22,12 +29,59 @@ static float Wobble(unsigned long nowMs, float speed) {
   return MOTION_WOBBLE_AMPLITUDE * wave * fade * ((speed >= 0) ? 1.0f : -1.0f);
 }
 
+const char *Motion_TurnName(TurnKind kind) {
+  switch (kind) {
+    case TURN_ROTATE_LEFT:  return "その場回転 左";
+    case TURN_ROTATE_RIGHT: return "その場回転 右";
+    case TURN_PIVOT_LEFT:   return "片側旋回 左";
+    default:                return "片側旋回 右";
+  }
+}
+
+// 回転の種類とPWMから、左右それぞれの出力を決めて出す。
+// 左＝M1・M2、右＝M3・M4。左回転は左輪を後退・右輪を前進、左片側旋回は右輪だけ前進。
+static void ApplyTurn(TurnKind kind, int pwm) {
+  switch (kind) {
+    case TURN_ROTATE_LEFT:  Motor_DrivePwm(-pwm, pwm); break;
+    case TURN_ROTATE_RIGHT: Motor_DrivePwm(pwm, -pwm); break;
+    case TURN_PIVOT_LEFT:   Motor_DrivePwm(0, pwm);    break;
+    default:                Motor_DrivePwm(pwm, 0);    break;
+  }
+}
+
+static bool TurnIsPivot(TurnKind kind) {
+  return kind == TURN_PIVOT_LEFT || kind == TURN_PIVOT_RIGHT;
+}
+
+static int TurnKickPwm(TurnKind kind) {
+  return TurnIsPivot(kind) ? MOTOR_PIVOT_KICK_PWM : MOTOR_ROTATE_KICK_PWM;
+}
+
+static int TurnHoldPwm(TurnKind kind) {
+  return TurnIsPivot(kind) ? MOTOR_PIVOT_HOLD_PWM : MOTOR_ROTATE_HOLD_PWM;
+}
+
+// 回転をやめる（内部用。停止の記録を出すかどうかを選べる）
+static void CancelTurn(unsigned long nowMs, const char *reason) {
+  if (!turning) {
+    return;
+  }
+  turning = false;
+  Motor_Stop();
+  Obstacle_Reset();   // 回っている間の測距は別の方向を見ている
+  if (reason != NULL) {
+    Log_Printf("動き", "%s %s（合計 %lums）", Motion_TurnName(turnKind), reason, nowMs - turnStartMs);
+  }
+}
+
 void Motion_Setup(void) {
   speedSmoother.reset(0.0f);
+  turning = false;
   Motor_Stop();
 }
 
 void Motion_SetSpeed(float target, unsigned long rampMs, unsigned long nowMs) {
+  CancelTurn(nowMs, "取り消し（直進の指示が来た）");   // 直進と回転は同時に使わない
   target = constrain(target, -1.0f, 1.0f);
   if (target != speedSmoother.target()) {
     Log_Printf("動き", "目標速度 %.2f→%.2f（%lums かけて）", speedSmoother.target(), target, rampMs);
@@ -40,12 +94,51 @@ void Motion_Stop(unsigned long nowMs) {
 }
 
 void Motion_EmergencyStop(void) {
+  turning = false;          // 回転中でも確実に止める（記録は下の1行にまとめる）
   speedSmoother.reset(0.0f);
   Motor_Stop();
   Log_Printf("動き", "非常停止");
 }
 
+void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
+  speedSmoother.reset(0.0f);   // 直進の目標は捨てる
+  turning = true;
+  turnKind = kind;
+  turnKicking = true;
+  turnStartMs = nowMs;
+  Obstacle_Reset();            // 回り始める前の測距は、別の方向を向いていたときの値
+  ApplyTurn(kind, TurnKickPwm(kind));
+  Log_Printf("動き", "%s キック PWM%d（%lums）",
+             Motion_TurnName(kind), TurnKickPwm(kind), (unsigned long)MOTOR_TURN_KICK_MS);
+}
+
+void Motion_StopTurn(unsigned long nowMs) {
+  CancelTurn(nowMs, "停止");
+}
+
+bool Motion_IsTurning(void) {
+  return turning;
+}
+
+bool Motion_IsPivoting(void) {
+  return turning && TurnIsPivot(turnKind);
+}
+
+TurnKind Motion_GetTurnKind(void) {
+  return turnKind;
+}
+
 void Motion_Update(unsigned long nowMs) {
+  // 回転中は直進の出力をしない。キック→保持の切り替えは、間隔を待たずに毎ループ見る
+  if (turning) {
+    if (turnKicking && nowMs - turnStartMs >= MOTOR_TURN_KICK_MS) {
+      turnKicking = false;
+      ApplyTurn(turnKind, TurnHoldPwm(turnKind));
+      Log_Printf("動き", "%s 保持 PWM%d", Motion_TurnName(turnKind), TurnHoldPwm(turnKind));
+    }
+    return;
+  }
+
   if (nowMs - lastUpdateMs < MOTION_UPDATE_INTERVAL_MS) {
     return;
   }

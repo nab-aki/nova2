@@ -27,6 +27,7 @@ void Sensors_Setup(void) {
   data.distanceMs = 0;
   data.lightAdc = Light_Read();
   data.track = Track_Read();
+  data.trackUpdated = false;
   data.batteryAdc = Battery_ReadAdc();
   data.batteryV = Battery_AdcToVoltage(data.batteryAdc);
 }
@@ -66,7 +67,8 @@ void Sensors_Update(unsigned long nowMs) {
     lastLightMs = nowMs;
     data.lightAdc = Light_Read();
   }
-  if (nowMs - lastTrackMs >= TRACK_READ_INTERVAL_MS) {
+  data.trackUpdated = (nowMs - lastTrackMs >= TRACK_READ_INTERVAL_MS);
+  if (data.trackUpdated) {
     lastTrackMs = nowMs;
     data.track = Track_Read();
   }

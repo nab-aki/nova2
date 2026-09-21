@@ -9,8 +9,8 @@ void Log_Setup(void) {
 }
 
 void Log_Printf(const char *tag, const char *fmt, ...) {
-  // 日本語1文字3バイト。状態行（main.cpp）は 220 バイト前後になるので余裕をみる
-  char message[320];
+  // 日本語1文字3バイト。状態行（main.cpp）は 270 バイト前後になるので余裕をみる
+  char message[384];
   va_list args;
   va_start(args, fmt);
   vsnprintf(message, sizeof(message), fmt, args);

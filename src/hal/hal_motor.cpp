@@ -38,9 +38,7 @@ void Motor_Setup(void) {
   Motor_Stop();
 }
 
-void Motor_Drive(float left, float right) {
-  int pwmLeft = Motor_SpeedToPwm(left);
-  int pwmRight = Motor_SpeedToPwm(right);
+void Motor_DrivePwm(int pwmLeft, int pwmRight) {
   if (pwmLeft == lastPwmLeft && pwmRight == lastPwmRight) {
     return;
   }
@@ -52,6 +50,10 @@ void Motor_Drive(float left, float right) {
   SetWheel(PCA9685_CH_M4_IN1, PCA9685_CH_M4_IN2, MOTOR_4_DIRECTION * pwmRight);
 }
 
+void Motor_Drive(float left, float right) {
+  Motor_DrivePwm(Motor_SpeedToPwm(left), Motor_SpeedToPwm(right));
+}
+
 void Motor_Stop(void) {
-  Motor_Drive(0.0f, 0.0f);
+  Motor_DrivePwm(0, 0);
 }

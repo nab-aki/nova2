@@ -17,8 +17,9 @@ struct SensorData {
   // 光センサー（ADC生値 0〜4095）
   int lightAdc;
 
-  // ライントラッキング（bit0=左、bit1=中央、bit2=右。1/0の意味は実測待ち）
+  // ライントラッキング（bit0=左、bit1=中央、bit2=右。実測：床=000、持ち上げ=111）
   uint8_t track;
+  bool trackUpdated;           // このループで読み取ったか（持ち上げの判定は読んだ回数で数える）
 
   // 電池
   int batteryAdc;
