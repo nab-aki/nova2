@@ -6,10 +6,13 @@
 #include <Arduino.h>
 
 struct SensorData {
-  // 超音波（正面のみ）
-  float distanceRawCm;      // 生値。エコーが返らなければ負
-  float distanceCm;         // 有効範囲（config.h の ULTRASONIC_MIN/MAX_CM）内なら距離、そうでなければ負
-  bool distanceValid;       // distanceCm が有効か
+  // 超音波（首に搭載。首の向いている方向を測る）
+  float distanceRawCm;         // 生値。エコーが返らなければ負
+  float distanceCm;            // 有効範囲（config.h の ULTRASONIC_MIN/MAX_CM）内なら距離、そうでなければ負
+  bool distanceValid;          // distanceCm が有効か
+  bool distanceUpdated;        // このループで測距が1回完了したか（障害物の判定はこのときだけ進める）
+  bool distanceNeckSteady;     // その測距を、首が安定した状態で取れたか
+  unsigned long distanceMs;    // その測距が完了した時刻
 
   // 光センサー（ADC生値 0〜4095）
   int lightAdc;
