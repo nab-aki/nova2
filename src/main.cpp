@@ -17,6 +17,7 @@
 #include "behaviors/blink.h"
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
+#include "behaviors/wander.h"
 #include "config.h"
 #include "core/arbiter.h"
 #include "core/eyes.h"
@@ -31,6 +32,7 @@
 static BlinkBehavior blinkBehavior;
 static NoticeBehavior noticeBehavior;
 static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
+static WanderBehavior wanderBehavior;
 static DebugTurnBehavior debugTurnBehavior;
 
 static unsigned long lastStatusMs = 0;
@@ -147,11 +149,12 @@ void setup() {
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
   Arbiter_Register(&noticeBehavior);
+  Arbiter_Register(&wanderBehavior);
   Arbiter_Register(&noticeEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 
-  Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d",
-             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED));
+  Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、うろうろを始めます",
+             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG);
   PrintKeyHelp();
 }
 
