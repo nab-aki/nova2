@@ -1,6 +1,7 @@
 #include "wander.h"
 
 #include "../config.h"
+#include "../core/debug_pause.h"
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
@@ -30,6 +31,9 @@ void WanderBehavior::ChangeState(State next, unsigned long nowMs) {
 int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
   (void)nowMs;
+  if (Pause_IsPaused()) {
+    return 0;               // デバッグの一時停止中は動かない
+  }
   return PRIORITY_WANDER;   // 既定の振る舞い。ほかに何もなければ常にこれ
 }
 

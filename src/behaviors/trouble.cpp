@@ -1,6 +1,7 @@
 #include "trouble.h"
 
 #include "../config.h"
+#include "../core/debug_pause.h"
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
@@ -27,6 +28,9 @@ void TroubleBehavior::ChangeState(State next, unsigned long nowMs) {
 // 空くかあきらめるまで手放さない（途中で ID25 に戻さない）
 int TroubleBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
+  if (Pause_IsPaused()) {
+    return 0;   // デバッグの一時停止中は動かない（動いていたら止まり、再開すると最初からやり直す）
+  }
   if (active_) {
     return PRIORITY_TROUBLE;
   }

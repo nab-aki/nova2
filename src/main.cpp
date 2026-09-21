@@ -6,7 +6,7 @@
 //   ・塞がったままなら、後退して左右を確かめ、その場回転で向きを変える（ID15）
 //   ・持ち上げたら（ライントラッキング111）すぐモーターを止める（安全層）
 //   ・シリアル（115200bps）に、測距値・判定・首の状態・モーター状態を出力する
-//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる（? でキー一覧）
+//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる。p でうろうろを一時停止／再開（? でキー一覧）
 //
 // 構成：hal/（ハードウェア操作）→ core/（センサー集約・首・障害物・安全・動き・表情・調停）
 //       → behaviors/（振る舞い）
@@ -21,6 +21,7 @@
 #include "behaviors/wander.h"
 #include "config.h"
 #include "core/arbiter.h"
+#include "core/debug_pause.h"
 #include "core/eyes.h"
 #include "core/motion.h"
 #include "core/neck.h"
@@ -82,7 +83,7 @@ static void PrintStatus(unsigned long nowMs) {
              Servo_GetAngle(SERVO_PAN), Servo_GetAngle(SERVO_TILT),
              Neck_OwnerName(Neck_Owner()), Neck_IsSteady(nowMs) ? "安定" : "動作中",
              Safety_IsStopping() ? " 安全:停止中" : "",
-             Safety_IsLifted() ? " 持ち上げ中" : "",
+             Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : ""),
              Eyes_Name(Eyes_Get()),
              Arbiter_ActiveName(LAYER_BODY), Arbiter_ActiveName(LAYER_EYES),
              noticeBehavior.stopCount());
@@ -94,6 +95,8 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %lums）", (unsigned long)TROUBLE_TURN_STEP_MS);
   Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %lums）", (unsigned long)WANDER_AVOID_PIVOT_MS);
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます");
+  Log_Printf("キー", "p:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
+  Log_Printf("キー", "現在：%s", Pause_IsPaused() ? "一時停止中" : "うろうろ中");
 }
 
 // 止まっていて、立て直しの最中でも持ち上げ中でもないときだけ受け付ける
@@ -123,6 +126,7 @@ static void HandleSerialKeys(void) {
       case '4': RequestDebugTurn(TURN_ROTATE_RIGHT, TROUBLE_TURN_STEP_MS);  break;
       case '5': RequestDebugTurn(TURN_PIVOT_LEFT, WANDER_AVOID_PIVOT_MS);   break;
       case '6': RequestDebugTurn(TURN_PIVOT_RIGHT, WANDER_AVOID_PIVOT_MS);  break;
+      case 'p': Pause_Toggle(); break;
       case '?': PrintKeyHelp(); break;
       case '\r':
       case '\n':
@@ -145,6 +149,7 @@ void setup() {
     Log_Printf("起動", "ライントラッキングセンサーが応答しません（起動は続けます）");
   }
 
+  Pause_Setup(DEBUG_START_PAUSED != 0);
   Sensors_Setup();
   Neck_Setup();
   Obstacle_Setup();
@@ -160,8 +165,9 @@ void setup() {
   Arbiter_Register(&noticeEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 
-  Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、うろうろを始めます",
-             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG);
+  Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、%s",
+             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG,
+             Pause_IsPaused() ? "一時停止から始めます（p で再開）" : "うろうろを始めます");
   PrintKeyHelp();
 }
 

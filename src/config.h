@@ -144,6 +144,11 @@
 #define PRIORITY_NOTICE             30      // 車体：ID9 気づく（20 から変更）
 #define PRIORITY_TROUBLE            40      // 車体：ID15 障害物で困る
 #define PRIORITY_DEBUG_TURN         50      // 車体：回転角を測るデバッグキー（3〜6）
+
+// ------------------------ デバッグ ------------------------ //
+// 1 にすると、起動直後から「一時停止」の状態で始める（回転角を測るとき用。p キーで再開）。
+// 0 が既定（今までどおり、起動したらすぐうろうろを始める）。
+#define DEBUG_START_PAUSED          0
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
 
