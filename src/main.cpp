@@ -17,6 +17,7 @@
 #include "behaviors/blink.h"
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
+#include "behaviors/trouble.h"
 #include "behaviors/wander.h"
 #include "config.h"
 #include "core/arbiter.h"
@@ -33,6 +34,7 @@ static BlinkBehavior blinkBehavior;
 static NoticeBehavior noticeBehavior;
 static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
 static WanderBehavior wanderBehavior;
+static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
 
 static unsigned long lastStatusMs = 0;
@@ -100,6 +102,10 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
     Log_Printf("キー", "持ち上げられているので無視します");
     return;
   }
+  if (troubleBehavior.isBusy()) {
+    Log_Printf("キー", "立て直し（困る）の最中なので無視します");
+    return;
+  }
   if (Motion_IsTurning() ||
       fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON ||
       fabsf(Motion_GetTarget()) >= MOTOR_SPEED_EPSILON) {
@@ -148,6 +154,7 @@ void setup() {
 
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
+  Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&noticeBehavior);
   Arbiter_Register(&wanderBehavior);
   Arbiter_Register(&noticeEyesBehavior);
