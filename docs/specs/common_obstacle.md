@@ -124,7 +124,7 @@ PWM や時間を増やしても効かなかったため。）
 | MOTOR_PWM_MIN | 675 | 前進の最低PWM。実測の動き出し 600 に電池低下の余裕を足した値（1300→700→675。docs/measurements.md） |
 | SAFETY_LIFT_TRACK | 0x07 | 持ち上げと判定するライントラッキングの値（111） |
 | SAFETY_LIFT_CLEAR_COUNT | 3 | 床に戻ったと認めるまでの連続読み取り回数（約300ms） |
-| MOTOR_ROTATE_KICK_MS / MOTOR_PIVOT_KICK_MS | 300 / 300 | 回転のキック（動き出し）を出す時間（**未測定の仮値**） |
+| MOTOR_ROTATE_KICK_MS / MOTOR_PIVOT_KICK_MS | 1000 / 300 | 回転のキック（動き出し）を出す時間（一旦の決定値。300/300 から変更。docs/measurements.md） |
 
 ## 初期値の根拠
 

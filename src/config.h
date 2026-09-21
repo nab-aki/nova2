@@ -30,12 +30,18 @@
 // その場回転・片側旋回（ID25）は、4輪の横滑りのため動き出しに大きな力が要る。ただし回り出せば下げても回り続ける。
 // そこで「動き出し（キック）」のPWMを短時間出してから、「回り続ける」PWMに下げる。
 // 値は正規化速度ではなく生のPWM。Motor_DrivePwm() で出し、段階の管理は core/motion.* が行う。
-#define MOTOR_ROTATE_KICK_PWM       1150    // その場回転の動き出し。実測 左1000・右950 の大きい方 × 1.12 ≒ 1120 → 1150（左右同じ値）
-#define MOTOR_ROTATE_HOLD_PWM       1000    // その場回転の回り続ける値。実測 850（左右とも）× 1.12 ≒ 952 → 1000
-#define MOTOR_PIVOT_KICK_PWM        1000    // 片側旋回の動き出し。実測 左右とも 850 × 1.12 ≒ 952 → 1000
-#define MOTOR_PIVOT_HOLD_PWM        900     // 片側旋回の回り続ける値。実測 左800・右750 の大きい方 × 1.12 ≒ 896 → 900
-#define MOTOR_ROTATE_KICK_MS        300     // 【仮値・未測定】その場回転のキックを出す時間。実機で詰める
-#define MOTOR_PIVOT_KICK_MS         300     // 【仮値・未測定】片側旋回のキックを出す時間（調整キー用に2つに分けた）
+// 【一旦の決定値（2026-09-21）】床（フローリング）で、デバッグの調整キー（q a w s e d r f）を使って探した値。
+// 最低PWMの実測＋余裕（その場回転 キック1150・保持1000、片側旋回 キック1000・保持900、キック300ms）では、
+// 1ステップ500ms で その場回転は約6°、片側旋回はほとんど回らなかったため、時間・キック・PWMを上げた。
+// 1ステップの角度：その場回転 左右とも約30°、片側旋回 左右とも約20°（docs/measurements.md）。
+// 5分間の試験で動きの印象を見て見直す。見直し候補：片側旋回は保持（1450）がキック（1400）より大きく、
+// キックの意味が薄い（実質 1450 一定）。
+#define MOTOR_ROTATE_KICK_PWM       1600    // その場回転の動き出し（一旦の決定値）
+#define MOTOR_ROTATE_HOLD_PWM       1000    // その場回転の回り続ける値（同上）
+#define MOTOR_PIVOT_KICK_PWM        1400    // 片側旋回の動き出し（同上。保持のほうが大きい点は見直し候補）
+#define MOTOR_PIVOT_HOLD_PWM        1450    // 片側旋回の回り続ける値（同上）
+#define MOTOR_ROTATE_KICK_MS        1000    // その場回転のキックを出す時間（同上）
+#define MOTOR_PIVOT_KICK_MS         300     // 片側旋回のキックを出す時間（同上）
 
 // ------------------------ 首サーボ ------------------------ //
 #define SERVO1_FRONT_DEG            84      // 実測：servo1（左右）の正面
@@ -183,7 +189,7 @@
 #define WANDER_SCAN_SAMPLES         3       // 1方向あたりの測距回数（最も近い値を採る）
 #define WANDER_SIDE_NEAR_CM         40.0f   // 横がこれより近ければ、反対側へ向きを変える
                                             // 斜め50°の距離なので、壁が平行なら横の実距離は 40×sin50°≒31cm
-#define WANDER_AVOID_PIVOT_MS       500     // 横を避けるための片側旋回の時間
+#define WANDER_AVOID_PIVOT_MS       1200    // 横を避けるための片側旋回の時間（うちキック MOTOR_PIVOT_KICK_MS 300ms。約20°。一旦の決定値）
 #define WANDER_RUN_MIN_MS           1000    // 巡航を保つ時間（ランダムの下限）
 #define WANDER_RUN_MAX_MS           3000    // 同（上限）
 
@@ -195,9 +201,9 @@
 #define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
                                             // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
-#define TROUBLE_TURN_STEP_MS        500     // 1回に回る時間（うちキック MOTOR_ROTATE_KICK_MS）
+#define TROUBLE_TURN_STEP_MS        1300    // 1回に回る時間（うちキック MOTOR_ROTATE_KICK_MS 1000ms・保持300ms。約30°。一旦の決定値）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
-#define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数（1ステップ30°の仮定。未測定）
+#define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数。360° ÷ 30°/ステップ（実測）＝ 12
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間
 
 #endif // NOVA_CONFIG_H
