@@ -148,8 +148,8 @@
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
 
 // ------------------------ ID9 気づく ------------------------ //
-#define NOTICE_REST_MS              3000    // 止まっている時間
-#define NOTICE_CRUISE_MS            1500    // 巡航を保つ時間
+// 走行ループ（停止→加速→巡航→減速）は ID25 に移したので、NOTICE_REST_MS・NOTICE_CRUISE_MS は
+// 使わなくなった（ID25 の WANDER_* が対応する）。
 #define NOTICE_WIDE_MS              1200    // 気づいたとき目を見開いている時間
 #define NOTICE_HOLD_MS              800     // 障害物がなくなってから、うろうろに戻るまでの間
 #define NOTICE_STOP_REPORT_MS       800     // 気づいてから、停止後の距離をシリアルに出すまでの待ち

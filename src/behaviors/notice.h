@@ -1,12 +1,17 @@
 // ID9 気づく（v1）。docs/specs/09_notice.md
-// 「前進 → 停止」の繰り返しの中で、正面の障害物に気づいたら即停止し、
-// 目を見開いて首を正面に向けたまま待つ。なくなったら、ゆっくり前進を再開する。
-// 方向転換はまだ行わない（ID15・ID25 としてスプリント2で扱う）。
+// 正面の障害物に気づいたら即停止し、目を見開いて首を正面に向けたまま待つ。
+//
+// スプリント2で走行ループ（停止→加速→巡航→減速）は ID25「うろうろ」に移し、
+// この振る舞いは「気づいた瞬間の反応」だけを受け持つ（docs/specs/25_wander.md）。
+//   ・障害物があるときだけ発動する（それ以外は優先度0で、ID25 が動く）
+//   ・反応（NOTICE_REACT_MS）が終わってもまだ塞がっていれば、ID15「障害物で困る」が引き継ぐ
+//   ・停止のたびに、停止後の距離と通算回数を出す（ID9 の完了条件の確認用）
 //
 // 車体と目の2つのレイヤーを使うため、このファイルに2つの振る舞いを置く。
 #ifndef NOVA_BEHAVIORS_NOTICE_H
 #define NOVA_BEHAVIORS_NOTICE_H
 
+#include "../config.h"
 #include "../core/behavior.h"
 
 class NoticeBehavior : public Behavior {
@@ -22,22 +27,24 @@ class NoticeBehavior : public Behavior {
   bool isNoticing() const { return state_ == STATE_NOTICED; }
   unsigned long noticedAtMs() const { return noticedAtMs_; }
 
+  // 気づいた反応（目を見開く・停止後の距離を出す）が終わったか。
+  // ID15「障害物で困る」は、これが終わってから引き継ぐ（設計原則1の順を守るため）
+  bool reactionDone(unsigned long nowMs) const {
+    return state_ == STATE_NOTICED && (long)(nowMs - noticedAtMs_) >= (long)NOTICE_REACT_MS;
+  }
+
+  int stopCount() const { return stopCount_; }
+
  private:
   enum State {
-    STATE_REST,      // 止まって待っている
-    STATE_ACCEL,     // ゆっくり加速
-    STATE_CRUISE,    // 巡航
-    STATE_DECEL,     // ゆっくり減速
+    STATE_IDLE,      // 何もしていない（ID25 が動いている）
     STATE_NOTICED    // 気づいて止まり、空くのを待っている
   };
 
-  void ChangeState(State next, unsigned long nowMs);
   void EnterNoticed(unsigned long nowMs);
   void ReportStop(unsigned long nowMs);
-  static const char *StateName(State state);
 
-  State state_ = STATE_REST;
-  unsigned long stateStartMs_ = 0;
+  State state_ = STATE_IDLE;
   unsigned long noticedAtMs_ = 0;
   unsigned long clearSinceMs_ = 0;
   bool clearTimerOn_ = false;    // 障害物がなくなってからの待ち時間を数えているか
@@ -45,6 +52,8 @@ class NoticeBehavior : public Behavior {
   float noticedCm_ = -1.0f;      // 気づいたときの距離
   float noticedSpeed_ = 0.0f;    // 気づいたときの接近速度（cm/s）
   bool noticedSpeedOk_ = false;
+  bool noticedWhileMoving_ = false;  // 走っているときに気づいたか（止まったまま気づいた分は数えない）
+  int stopCount_ = 0;            // 起動からの通算の停止回数（完了条件の確認用）
 };
 
 // 気づいた直後だけ目を見開く（まばたきより優先）。

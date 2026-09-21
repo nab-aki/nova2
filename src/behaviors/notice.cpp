@@ -3,52 +3,47 @@
 #include "../config.h"
 #include "../core/eyes.h"
 #include "../core/motion.h"
-#include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../hal/hal_log.h"
 
 // ------------------------ 車体 ------------------------ //
 
+// 障害物があるときだけ発動する。空いたあとも、見開き・停止後の報告・その後の間合いが
+// 終わるまでは手放さない（終わったら優先度0になり、ID25「うろうろ」に戻る）
 int NoticeBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
-  (void)nowMs;
-  return PRIORITY_NOTICE;
-}
-
-const char *NoticeBehavior::StateName(State state) {
-  switch (state) {
-    case STATE_REST:    return "停止";
-    case STATE_ACCEL:   return "加速";
-    case STATE_CRUISE:  return "巡航";
-    case STATE_DECEL:   return "減速";
-    default:            return "気づく";
+  if (Obstacle_IsBlocked()) {
+    return PRIORITY_NOTICE;
   }
-}
-
-void NoticeBehavior::ChangeState(State next, unsigned long nowMs) {
-  Log_Printf("気づく", "%s→%s", StateName(state_), StateName(next));
-  state_ = next;
-  stateStartMs_ = nowMs;
+  if (state_ != STATE_NOTICED) {
+    return 0;
+  }
+  if ((long)(nowMs - noticedAtMs_) < (long)NOTICE_REACT_MS) {
+    return PRIORITY_NOTICE;   // 反応の途中
+  }
+  if (!clearTimerOn_ || nowMs - clearSinceMs_ < NOTICE_HOLD_MS) {
+    return PRIORITY_NOTICE;   // 空いてからの間合い
+  }
+  return 0;
 }
 
 void NoticeBehavior::onStart(unsigned long nowMs) {
-  // 起動直後にいきなり走らないよう、停止から始める
-  state_ = STATE_REST;
-  stateStartMs_ = nowMs;
-  clearTimerOn_ = false;
-  stopReported_ = false;
-  Motion_Stop(nowMs);
+  EnterNoticed(nowMs);
 }
 
 void NoticeBehavior::onStop(unsigned long nowMs) {
-  Motion_Stop(nowMs);
+  (void)nowMs;
+  state_ = STATE_IDLE;
 }
 
 // 障害物に気づいた。即停止は安全層が行うので、ここでは目標速度を0にして記録を残す
 void NoticeBehavior::EnterNoticed(unsigned long nowMs) {
   noticedCm_ = Obstacle_LastCm();
   noticedSpeedOk_ = Obstacle_ApproachSpeed(&noticedSpeed_);
-  ChangeState(STATE_NOTICED, nowMs);
+  // 安全層が止めるのはこの後（loop の順番）なので、ここでは気づいた瞬間の速度が読める。
+  // 止まっているときに気づいた（目の前に物を置かれた）ぶんは、完了条件の回数に数えない
+  noticedWhileMoving_ = fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON;
+  state_ = STATE_NOTICED;
   noticedAtMs_ = nowMs;
   clearTimerOn_ = false;
   stopReported_ = false;
@@ -62,88 +57,52 @@ void NoticeBehavior::EnterNoticed(unsigned long nowMs) {
   }
 }
 
-// 止まりきったころに、停止後の距離を1回だけ出す（完了条件の確認と config.h の見直しに使う）
+// 止まりきったころに、停止後の距離を1回だけ出す（ID9 の完了条件の確認と config.h の見直しに使う）
 void NoticeBehavior::ReportStop(unsigned long nowMs) {
   (void)nowMs;
   stopReported_ = true;
   float restCm = Obstacle_LastCm();
   float slide = (noticedCm_ >= 0.0f && restCm >= 0.0f) ? (noticedCm_ - restCm) : -1.0f;
+
+  if (!noticedWhileMoving_) {
+    Log_Printf("気づく", "停止後の距離 %.1fcm（止まっているときに気づいたので、通算には数えません）", restCm);
+    return;
+  }
+
+  stopCount_++;
   if (slide >= 0.0f) {
-    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm）",
-               restCm, noticedCm_, slide, OBSTACLE_STOP_CM);
+    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm）通算%d回目",
+               restCm, noticedCm_, slide, OBSTACLE_STOP_CM, stopCount_);
   } else {
-    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、閾値 %.0fcm）",
-               restCm, noticedCm_, OBSTACLE_STOP_CM);
+    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、閾値 %.0fcm）通算%d回目",
+               restCm, noticedCm_, OBSTACLE_STOP_CM, stopCount_);
+  }
+  const float contactWarnCm = 10.0f;   // 非常停止の 12cm より下。ここまで近いと接触を疑う
+  if (restCm >= 0.0f && restCm < contactWarnCm) {
+    Log_Printf("気づく", "※停止後の距離が%.0fcm未満です。接触したおそれがあります", contactWarnCm);
   }
 }
 
 void NoticeBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
-  bool blocked = Obstacle_IsBlocked();
-  unsigned long elapsed = nowMs - stateStartMs_;
-
-  // 走っている最中に障害物を見つけたら、どの状態からでも「気づく」へ
-  if (blocked && state_ != STATE_NOTICED && state_ != STATE_REST) {
-    EnterNoticed(nowMs);
+  if (state_ != STATE_NOTICED) {
     return;
   }
 
-  switch (state_) {
-    case STATE_REST:
-      if (blocked) {
-        return;   // 障害物があるうちは走り出さない
-      }
-      if (elapsed < NOTICE_REST_MS) {
-        return;
-      }
-      if (!Obstacle_IsReady()) {
-        return;   // 測距の履歴がたまるまで待つ
-      }
-      if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
-        return;   // 首が正面・水平で安定してから走り出す
-      }
-      ChangeState(STATE_ACCEL, nowMs);
-      Motion_SetSpeed(CRUISE_SPEED, MOTION_ACCEL_MS, nowMs);
-      break;
-
-    case STATE_ACCEL:
-      if (Motion_IsAtTarget()) {
-        ChangeState(STATE_CRUISE, nowMs);
-      }
-      break;
-
-    case STATE_CRUISE:
-      if (elapsed >= NOTICE_CRUISE_MS) {
-        ChangeState(STATE_DECEL, nowMs);
-        Motion_Stop(nowMs);
-      }
-      break;
-
-    case STATE_DECEL:
-      if (Motion_IsAtTarget()) {
-        ChangeState(STATE_REST, nowMs);
-      }
-      break;
-
-    case STATE_NOTICED:
-      if (!stopReported_ && nowMs - noticedAtMs_ >= NOTICE_STOP_REPORT_MS) {
-        ReportStop(nowMs);
-      }
-      if (blocked) {
-        clearTimerOn_ = false;   // まだ空いていない
-        return;
-      }
-      if (!clearTimerOn_) {
-        clearTimerOn_ = true;
-        clearSinceMs_ = nowMs;
-        Log_Printf("気づく", "正面が空いた（%lums 待ってから前進を考える）", (unsigned long)NOTICE_HOLD_MS);
-        return;
-      }
-      if (nowMs - clearSinceMs_ >= NOTICE_HOLD_MS) {
-        ChangeState(STATE_REST, nowMs);
-      }
-      break;
+  if (!stopReported_ && nowMs - noticedAtMs_ >= NOTICE_STOP_REPORT_MS) {
+    ReportStop(nowMs);
   }
+
+  if (Obstacle_IsBlocked()) {
+    clearTimerOn_ = false;   // まだ空いていない
+    return;
+  }
+  if (!clearTimerOn_) {
+    clearTimerOn_ = true;
+    clearSinceMs_ = nowMs;
+    Log_Printf("気づく", "正面が空いた（%lums 待ってから、うろうろに戻る）", (unsigned long)NOTICE_HOLD_MS);
+  }
+  // 間合いが過ぎると priority() が0を返し、調停が ID25「うろうろ」に戻す
 }
 
 // ------------------------ 目 ------------------------ //

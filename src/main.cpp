@@ -68,7 +68,7 @@ static void PrintStatus(unsigned long nowMs) {
 
   Log_Printf("状態",
              "距離:%s 障害物:%s(近%d/%d) 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
-             "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s",
+             "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s 気づき停止:%d回",
              distance,
              Obstacle_IsBlocked() ? "あり" : "なし", Obstacle_NearCount(), Obstacle_SampleCount(),
              approach, s.lightAdc,
@@ -80,7 +80,8 @@ static void PrintStatus(unsigned long nowMs) {
              Safety_IsStopping() ? " 安全:停止中" : "",
              Safety_IsLifted() ? " 持ち上げ中" : "",
              Eyes_Name(Eyes_Get()),
-             Arbiter_ActiveName(LAYER_BODY), Arbiter_ActiveName(LAYER_EYES));
+             Arbiter_ActiveName(LAYER_BODY), Arbiter_ActiveName(LAYER_EYES),
+             noticeBehavior.stopCount());
 }
 
 // ------------------------ デバッグキー（回転角の測定用）------------------------ //
