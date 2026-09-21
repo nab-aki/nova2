@@ -74,9 +74,9 @@ ID には紐づかない共通部品（#0）。ID9・ID15・ID25・ID26 が共�
 | OBSTACLE_EMERGENCY_CM | 12.0 | 1回でもこれ未満なら即停止 |
 | OBSTACLE_SPEED_MIN_MS | 150 | 接近速度を求めるのに必要な最小の時間差 |
 | ULTRASONIC_NO_ECHO_WARN_MS | 10000 | エコーなしがこれだけ続いたら警告を1行出す |
-| CRUISE_SPEED | 0.02 | 巡航の正規化速度（PWM 726 相当。0.23 から変更） |
+| CRUISE_SPEED | 0.0385 | 巡航の正規化速度（PWM 726 相当。0.23→0.02→0.0385。MOTOR_PWM_MIN 675 でも PWM726 になるよう計算し直した） |
 | ULTRASONIC_INTERVAL_MS | 60 | 測距の間隔（100 から変更） |
-| MOTOR_PWM_MIN | 700 | 実測：50Hz で前進した最低PWM（1300 から変更） |
+| MOTOR_PWM_MIN | 675 | 前進の最低PWM。実測の動き出し 600 に電池低下の余裕を足した値（1300→700→675。docs/measurements.md） |
 
 ## 初期値の根拠
 
