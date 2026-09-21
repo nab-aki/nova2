@@ -18,6 +18,7 @@
 #include "behaviors/blink.h"
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
+#include "behaviors/pause_cue.h"
 #include "behaviors/trouble.h"
 #include "behaviors/wander.h"
 #include "config.h"
@@ -39,6 +40,7 @@ static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
 static WanderBehavior wanderBehavior;
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
+static PauseCueBehavior pauseCueBehavior;
 
 static unsigned long lastStatusMs = 0;
 
@@ -100,7 +102,8 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %dms）", TurnTuning_StepMs(TURN_ROTATE_LEFT));
   Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %dms）", TurnTuning_StepMs(TURN_PIVOT_LEFT));
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
-  Log_Printf("キー", "p:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
+  Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
+  Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -157,6 +160,12 @@ static bool IsTuneKey(char c) {
   return c == 'q' || c == 'a' || c == 'w' || c == 's' || c == 'e' || c == 'd' || c == 'r' || c == 'f';
 }
 
+// 一時停止と再開を切り替え、目で合図する（キー p とリモコンの ▶ の共通の入口）
+static void TogglePause(const char *source) {
+  bool paused = Pause_Toggle(source);
+  pauseCueBehavior.trigger(paused);
+}
+
 static void HandleSerialKeys(void) {
   static char lastKey = 0;
   static unsigned long lastKeyMs = 0;
@@ -183,7 +192,7 @@ static void HandleSerialKeys(void) {
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
       case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT));     break;
       case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT));   break;
-      case 'p': Pause_Toggle(); break;
+      case 'p': TogglePause("キー p"); break;
       case 'q': TuneKey(TUNE_STEP_MS, +1);  break;
       case 'a': TuneKey(TUNE_STEP_MS, -1);  break;
       case 'w': TuneKey(TUNE_KICK_MS, +1);  break;
@@ -236,6 +245,7 @@ void setup() {
   Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&noticeBehavior);
   Arbiter_Register(&wanderBehavior);
+  Arbiter_Register(&pauseCueBehavior);
   Arbiter_Register(&noticeEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 
@@ -250,7 +260,9 @@ void loop() {
 
   HandleSerialKeys();
   uint32_t irCode;
-  Ir_Poll(&irCode);   // 受信したボタンは hal_ir が1行出す（ボタンへの割り当ては次のコミット）
+  if (Ir_Poll(&irCode) && irCode == IR_BUTTON_PAUSE) {   // 受信したボタンは hal_ir が1行出す
+    TogglePause("リモコン ▶");
+  }
   Buzzer_Update(now);
   Sensors_Update(now);
   Neck_Update(now);

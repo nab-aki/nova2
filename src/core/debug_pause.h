@@ -13,7 +13,8 @@ void Pause_Setup(bool startPaused);
 
 bool Pause_IsPaused(void);
 
-// 一時停止と再開を切り替える。切り替えた結果（true=一時停止中）を返す
-bool Pause_Toggle(void);
+// 一時停止と再開を切り替える。切り替えた結果（true=一時停止中）を返す。
+// source は、どの入口から切り替えたか（シリアルに出す。例："キー p"、"リモコン ▶"）
+bool Pause_Toggle(const char *source);
 
 #endif // NOVA_CORE_DEBUG_PAUSE_H

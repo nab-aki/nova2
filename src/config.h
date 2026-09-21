@@ -62,6 +62,7 @@
 
 // ------------------------ IR受信（リモコン）------------------------ //
 #define IR_DEBOUNCE_MS              500     // 同じコードがこの時間以内に続いたら、押しっぱなし（または二重受信）とみなして捨てる
+#define IR_BUTTON_PAUSE             0xFFA857  // 一時停止・再開に割り当てるボタン（▶。Freenove のリモコン。docs/specs/common_ir.md）
 
 // ------------------------ センサー読み取り間隔 ------------------------ //
 #define LIGHT_READ_INTERVAL_MS      100
@@ -174,6 +175,12 @@
 #define DEBUG_TUNE_PWM_STEP         50
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
+#define PRIORITY_PAUSE_CUE          40      // 目：一時停止・再開の合図（リモコンの ▶ や p キー）
+
+// ------------------------ 一時停止・再開の合図（目）------------------------ //
+#define PAUSE_CUE_PAUSE_MS          1000    // 一時停止：目を細めている時間
+#define PAUSE_CUE_RESUME_HALF_MS    150     // 再開：ゆっくり閉じて開く（細める→閉じる→細める）の、細めている時間（前後それぞれ）
+#define PAUSE_CUE_RESUME_CLOSED_MS  200     // 同、閉じている時間（合計 150+200+150 = 500ms）
 
 // ------------------------ ID9 気づく ------------------------ //
 // 走行ループ（停止→加速→巡航→減速）は ID25 に移したので、NOTICE_REST_MS・NOTICE_CRUISE_MS は
