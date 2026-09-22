@@ -231,6 +231,10 @@ void setup() {
   Log_Setup();
   Log_Printf("起動", "Nova スプリント2（ID25 うろうろ・ID15 障害物で困る）");
 
+  uint8_t resetCode = Reset_ReasonCode();
+  Log_Printf("起動", "リセット理由：%s%s", Reset_ReasonName(resetCode),
+             Reset_IsBrownout(resetCode) ? "（電池切れ・電圧低下の疑い。試験の集計にも残ります）" : "");
+
   randomSeed(esp_random());
 
   bool trackOk = Hal_Setup();

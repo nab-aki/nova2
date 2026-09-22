@@ -13,5 +13,6 @@ bool Hal_Setup(void) {
   Light_Setup();
   Battery_Setup();
   Storage_Setup();
+  Reset_Setup();
   return Track_Setup();
 }

@@ -2,12 +2,14 @@
 
 #include "../config.h"
 #include "../hal/hal_log.h"
+#include "../hal/hal_reset.h"
 #include "../hal/hal_storage.h"
 #include "motion.h"
 
 // 1回の試験の集計値。NVSにもこのまま保存する（構造を変えたら古い保存値は読み捨てられる）
 struct TestRecord {
   uint32_t elapsedMs;         // 経過時間（最後に保存した時点まで）
+  uint8_t startResetCode;     // この試験が始まったブートの、起動時のリセット理由（Reset_ReasonCode）
   uint16_t stopCount;         // ID9：気づいて停止した回数
   uint16_t stopDistUnknown;   // うち、停止後の距離が測れなかった回数
   float stopDistSumCm;        // 測れた分の合計（平均用）
@@ -38,6 +40,7 @@ static unsigned long testStartMs = 0;
 static unsigned long lastSaveMs = 0;
 static bool recording = false;        // 再開してから一時停止するまでの間か
 static bool pendingSave = false;      // 一時停止したが、まだ止まりきっていないため保存を待っている
+static uint8_t bootResetCode = 0;     // このブートのリセット理由（新しい試験を始めるたびに記録に刻む）
 
 static void ResetRecord(TestRecord *r) {
   *r = TestRecord{};
@@ -51,11 +54,13 @@ static void BeginNewTest(unsigned long nowMs) {
     storage.validCount++;
   }
   ResetRecord(&current);
+  current.startResetCode = bootResetCode;
   testStartMs = nowMs;
   lastSaveMs = nowMs;
   recording = true;
   pendingSave = false;
-  Log_Printf("試験", "新しい試験を始めます（%d回目の枠）", storage.headIndex + 1);
+  Log_Printf("試験", "新しい試験を始めます（%d回目の枠。起動理由：%s）",
+             storage.headIndex + 1, Reset_ReasonName(bootResetCode));
 }
 
 // 現在の値をリングに書き込み、NVSへ保存する
@@ -63,9 +68,9 @@ static void SaveCurrent(unsigned long nowMs, const char *reason) {
   current.elapsedMs = nowMs - testStartMs;
   storage.ring[storage.headIndex] = current;
   Storage_Save(&storage, sizeof(storage));
-  Log_Printf("試験", "保存しました（%s。経過%lums 気づく停止%d回 困る開始%d/空き%d/あきらめ%d "
+  Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回 困る開始%d/空き%d/あきらめ%d "
              "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d）",
-             reason, current.elapsedMs, current.stopCount,
+             reason, Reset_ReasonName(current.startResetCode), current.elapsedMs, current.stopCount,
              current.troubleStarts, current.troubleCleared, current.troubleGiveups,
              current.pivotPerformed, current.pivotInterrupted,
              current.recoverPerformed, current.recoverInterrupted, current.liftCount);
@@ -74,6 +79,7 @@ static void SaveCurrent(unsigned long nowMs, const char *reason) {
 void TestStats_Setup(bool startPaused, unsigned long nowMs) {
   recording = false;
   pendingSave = false;
+  bootResetCode = Reset_ReasonCode();
   ResetRecord(&current);
 
   if (!Storage_Load(&storage, sizeof(storage)) || storage.magic != TEST_STATS_MAGIC) {
@@ -228,9 +234,10 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
   } else {
     snprintf(distPart, sizeof(distPart), "-");
   }
-  Log_Printf("試験", "[%d]%s 経過%lums 気づく:停止%d回(%s) 困る:開始%d/空き%d/あきらめ%d "
+  Log_Printf("試験", "[%d]%s 起動:%s 経過%lums 気づく:停止%d回(%s) 困る:開始%d/空き%d/あきらめ%d "
              "うろうろ:旋回 実施%d/中断%d 後退回転 実施%d/中断%d 持ち上げ%d回",
              slot, isRecording ? "（記録中）" : (live ? "（保存待ち）" : ""),
+             Reset_ReasonName(r.startResetCode),
              elapsedMs, r.stopCount, distPart,
              r.troubleStarts, r.troubleCleared, r.troubleGiveups,
              r.pivotPerformed, r.pivotInterrupted,
@@ -265,6 +272,7 @@ static void ClearAll(unsigned long nowMs) {
   ResetRecord(&current);
   pendingSave = false;
   if (recording) {
+    current.startResetCode = bootResetCode;
     testStartMs = nowMs;
     lastSaveMs = nowMs;
     storage.headIndex = 0;

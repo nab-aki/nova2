@@ -9,6 +9,7 @@
 #include "hal_light.h"
 #include "hal_matrix.h"
 #include "hal_motor.h"
+#include "hal_reset.h"
 #include "hal_servo.h"
 #include "hal_storage.h"
 #include "hal_track.h"
