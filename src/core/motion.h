@@ -34,6 +34,10 @@ float Motion_GetSpeed(void);      // なめらか化後の現在速度（揺ら�
 float Motion_GetTarget(void);
 bool Motion_IsAtTarget(void);     // 目標速度に到達したか
 
+// 車体が完全に止まっているか（速度・目標速度・回転のいずれも無し）。
+// safety.cpp と core/test_stats.cpp が共通で使う（判定を複製しない）
+bool Motion_IsStill(void);
+
 // ------------------------ 回転（その場回転・片側旋回）------------------------ //
 // 実測（docs/measurements.md）のとおり、回転・旋回は動き出しに大きなPWMが要るが、
 // 回り出せば下げても回り続ける。キック（MOTOR_*_KICK_MS）→ 保持 の2段階で出す。

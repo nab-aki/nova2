@@ -5,6 +5,7 @@
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
+#include "../core/test_stats.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
@@ -57,6 +58,7 @@ void WanderBehavior::onStop(unsigned long nowMs) {
                nowMs - stateStartMs_,
                Obstacle_IsBlocked() ? "障害物ありのため ID9 に" : "ほかの振る舞い（デバッグ回転・一時停止など）に",
                Obstacle_LastCm());
+    TestStats_RecordPivotInterrupted();
   }
   Motion_Stop(nowMs);            // 回転中ならここで取り消される
   Neck_Release(NECK_OWNER_RANGE);
@@ -161,6 +163,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (!Motion_IsTurning()) {
         Log_Printf("うろうろ", "片側旋回が安全層に止められました（%lums で中断、距離 %.1fcm）。向きは変わりきっていません",
                    nowMs - stateStartMs_, Obstacle_LastCm());
+        TestStats_RecordPivotInterrupted();
         pendingPivot_ = false;
         ChangeState(STATE_READY, nowMs);
         return;

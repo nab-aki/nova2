@@ -30,6 +30,7 @@
 #include "core/obstacle.h"
 #include "core/safety.h"
 #include "core/sensors.h"
+#include "core/test_stats.h"
 #include "core/turn_tuning.h"
 #include "hal/hal.h"
 #include "hal/hal_log.h"
@@ -104,6 +105,7 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
   Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
   Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
+  Log_Printf("キー", "t:試験の集計を表示  h:試験の集計を今すぐ保存（止まっているときだけ）  x:集計を消去（5秒以内に2回）");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -161,9 +163,10 @@ static bool IsTuneKey(char c) {
 }
 
 // 一時停止と再開を切り替え、目で合図する（キー p とリモコンの ▶ の共通の入口）
-static void TogglePause(const char *source) {
+static void TogglePause(const char *source, unsigned long nowMs) {
   bool paused = Pause_Toggle(source);
   pauseCueBehavior.trigger(paused);
+  TestStats_OnPauseToggle(paused, nowMs);
 }
 
 static void HandleSerialKeys(void) {
@@ -192,7 +195,7 @@ static void HandleSerialKeys(void) {
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
       case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT));     break;
       case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT));   break;
-      case 'p': TogglePause("キー p"); break;
+      case 'p': TogglePause("キー p", now); break;
       case 'q': TuneKey(TUNE_STEP_MS, +1);  break;
       case 'a': TuneKey(TUNE_STEP_MS, -1);  break;
       case 'w': TuneKey(TUNE_KICK_MS, +1);  break;
@@ -210,6 +213,9 @@ static void HandleSerialKeys(void) {
         TurnTuning_Print(false, true);
         TurnTuning_Print(true, true);
         break;
+      case 't': TestStats_Print(now); break;
+      case 'h': TestStats_RequestSave(now); break;
+      case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;
       case '\r':
       case '\n':
@@ -233,6 +239,7 @@ void setup() {
   }
 
   Pause_Setup(DEBUG_START_PAUSED != 0);
+  TestStats_Setup(DEBUG_START_PAUSED != 0, millis());
   Sensors_Setup();
   Neck_Setup();
   Obstacle_Setup();
@@ -261,7 +268,7 @@ void loop() {
   HandleSerialKeys();
   uint32_t irCode;
   if (Ir_Poll(&irCode) && irCode == IR_BUTTON_PAUSE) {   // 受信したボタンは hal_ir が1行出す
-    TogglePause("リモコン ▶");
+    TogglePause("リモコン ▶", now);
   }
   Buzzer_Update(now);
   Sensors_Update(now);
@@ -273,6 +280,7 @@ void loop() {
 
   Eyes_Update(now);
   Motion_Update(now);
+  TestStats_Update(now);   // 止まっているときだけ、試験の集計をフラッシュへ保存する
 
   if (now - lastStatusMs >= STATUS_PRINT_INTERVAL_MS) {
     lastStatusMs = now;

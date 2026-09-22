@@ -172,3 +172,9 @@ float Motion_GetTarget(void) {
 bool Motion_IsAtTarget(void) {
   return speedSmoother.done();
 }
+
+bool Motion_IsStill(void) {
+  return fabsf(Motion_GetSpeed()) < MOTOR_SPEED_EPSILON &&
+         fabsf(Motion_GetTarget()) < MOTOR_SPEED_EPSILON &&
+         !Motion_IsTurning();
+}

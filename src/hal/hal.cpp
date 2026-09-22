@@ -12,5 +12,6 @@ bool Hal_Setup(void) {
   Buzzer_Setup();
   Light_Setup();
   Battery_Setup();
+  Storage_Setup();
   return Track_Setup();
 }

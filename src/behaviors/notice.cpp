@@ -4,6 +4,7 @@
 #include "../core/eyes.h"
 #include "../core/motion.h"
 #include "../core/obstacle.h"
+#include "../core/test_stats.h"
 #include "../hal/hal_log.h"
 
 // ------------------------ 車体 ------------------------ //
@@ -70,6 +71,7 @@ void NoticeBehavior::ReportStop(unsigned long nowMs) {
   }
 
   stopCount_++;
+  TestStats_RecordNoticeStop(restCm);
   if (slide >= 0.0f) {
     Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm）通算%d回目",
                restCm, noticedCm_, slide, OBSTACLE_STOP_CM, stopCount_);

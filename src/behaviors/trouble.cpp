@@ -5,6 +5,7 @@
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
+#include "../core/test_stats.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
@@ -49,6 +50,7 @@ void TroubleBehavior::StartSequence(unsigned long nowMs) {
   state_ = STATE_BACK;
   stateStartMs_ = nowMs;
   Log_Printf("困る", "正面が塞がったまま（%.1fcm）。立て直します", backStartCm_);
+  TestStats_RecordTroubleStart();
   Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);
 }
 
@@ -188,6 +190,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       //   共通部品の判定（あり→なしに戻った）の両方（docs/specs/15_trouble.md）
       if (checkClosestCm_ >= TROUBLE_CLEAR_CM && !Obstacle_IsBlocked()) {
         Log_Printf("困る", "正面が空いた（%.1fcm、回転%d回）。うろうろに戻ります", checkClosestCm_, steps_);
+        TestStats_RecordTroubleCleared();
         active_ = false;   // 優先度が0になり、調停が ID25 に戻す
         return;
       }
@@ -195,6 +198,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (steps_ >= TROUBLE_MAX_STEPS) {
         Log_Printf("困る", "%d回まわっても空きません。%lums 休みます",
                    steps_, (unsigned long)TROUBLE_GIVEUP_REST_MS);
+        TestStats_RecordTroubleGiveup();
         ChangeState(STATE_REST, nowMs);
         return;
       }

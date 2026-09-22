@@ -5,6 +5,7 @@
 #include "motion.h"
 #include "neck.h"
 #include "obstacle.h"
+#include "test_stats.h"
 
 static bool stopping = false;
 static bool debugTurnActive = false;   // デバッグ回転の1ステップの間は、障害物「あり」では止めない
@@ -18,11 +19,9 @@ void Safety_Setup(void) {
   liftClearCount = 0;
 }
 
-// 車体が動いている（または動こうとしている）か。回転も含む
+// 車体が動いている（または動こうとしている）か。回転も含む（core/motion.* の共通判定）
 static bool BodyIsMoving(void) {
-  return fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON ||
-         fabsf(Motion_GetTarget()) >= MOTOR_SPEED_EPSILON ||
-         Motion_IsTurning();
+  return !Motion_IsStill();
 }
 
 // 障害物に近づく向きの動きか。前進と片側旋回（片輪が前に出て車体が前へふくらむ）が対象。
@@ -44,6 +43,7 @@ static void WatchLift(const SensorData &sensors) {
       lifted = true;
       Log_Printf("安全", "持ち上げを検知（ライン%d%d%d）。モーターを止めます",
                  sensors.track & 0x01, (sensors.track >> 1) & 0x01, (sensors.track >> 2) & 0x01);
+      TestStats_RecordLift();
     }
     return;
   }

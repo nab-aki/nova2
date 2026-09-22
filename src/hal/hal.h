@@ -10,6 +10,7 @@
 #include "hal_matrix.h"
 #include "hal_motor.h"
 #include "hal_servo.h"
+#include "hal_storage.h"
 #include "hal_track.h"
 #include "hal_ultrasonic.h"
 #include "hal_ws2812.h"
