@@ -8,6 +8,9 @@
 // 横がとても近い（WANDER_SIDE_VERY_NEAR_CM 未満）ときの後退+その場回転は、
 // 片側旋回が安全層に止められ続けて張りつく問題（2026-09-22 の5分間試験）への対策。
 // 後退・その場回転の間は ID15 の立て直しと同じく、気づく（ID9）に割り込まれず最後までやり切る。
+// 後退が止まってから回転を始めるまでに WANDER_RECOVER_PAUSE_MS の「ため」を挟む
+// （なめらか加減速の出力が0になっても、車体は慣性で少し動き続けている可能性があり、
+//  間を置かず逆向きの回転を始めると大電流になりブラウンアウトを起こすため。2026-09-22）。
 //
 // 走行中に正面の障害物に気づいたら ID9 が、そのあとの立て直しは ID15 が引き継ぐ。
 #ifndef NOVA_BEHAVIORS_WANDER_H
@@ -35,7 +38,8 @@ class WanderBehavior : public Behavior {
     STATE_FACE_FRONT,    // 首を正面へ戻す
     STATE_AVOID,         // 横が近いので片側旋回で向きを変える
     STATE_RECOVER_BACK,  // 横がとても近いので、少し後退する（張りつき対策）
-    STATE_RECOVER_TURN,  // 後退のあと、反対側へその場回転する
+    STATE_RECOVER_PAUSE, // 後退のあと、回転を始める前の「ため」（ブラウンアウト対策）
+    STATE_RECOVER_TURN,  // 反対側へその場回転する
     STATE_READY,         // 測距の履歴がたまるのを待つ
     STATE_ACCEL,
     STATE_CRUISE,

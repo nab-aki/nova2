@@ -18,6 +18,7 @@ const char *WanderBehavior::StateName(State state) {
     case STATE_FACE_FRONT:    return "正面へ戻す";
     case STATE_AVOID:         return "片側旋回";
     case STATE_RECOVER_BACK:  return "後退";
+    case STATE_RECOVER_PAUSE: return "ため（回転前）";
     case STATE_RECOVER_TURN:  return "その場回転";
     case STATE_READY:         return "歩き出す準備";
     case STATE_ACCEL:         return "加速";
@@ -38,8 +39,8 @@ int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   if (Pause_IsPaused()) {
     return 0;               // デバッグの一時停止中は動かない
   }
-  if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_TURN) {
-    // 横がとても近いときの後退+その場回転は、ID15 の立て直しと同じく
+  if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_PAUSE || state_ == STATE_RECOVER_TURN) {
+    // 横がとても近いときの後退+ため+その場回転は、ID15 の立て直しと同じく
     // 気づく（ID9、優先度30）に割り込まれず最後までやり切る（非常停止と持ち上げは安全層が別途扱う）
     return PRIORITY_WANDER_RECOVER;
   }
@@ -67,7 +68,7 @@ void WanderBehavior::onStop(unsigned long nowMs) {
                Obstacle_IsBlocked() ? "障害物ありのため ID9 に" : "ほかの振る舞い（デバッグ回転・一時停止など）に",
                Obstacle_LastCm());
     TestStats_RecordPivotInterrupted();
-  } else if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_TURN) {
+  } else if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_PAUSE || state_ == STATE_RECOVER_TURN) {
     // 優先度 PRIORITY_WANDER_RECOVER（35）で気づく（30）には割り込まれないので、
     // ここに来るのは一時停止など、優先度が0になる場合だけのはず
     Log_Printf("うろうろ", "後退+その場回転の途中で交代しました（%lums で中断、%s）。向きは変わりきっていません",
@@ -222,8 +223,18 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (!Motion_IsAtTarget()) {
         return;
       }
-      Log_Printf("うろうろ", "後退 %lums：%sへその場回転します",
-                 (unsigned long)TROUBLE_BACK_MS, Motion_TurnName(recoverKind_));
+      Log_Printf("うろうろ", "後退 %lums：停止。%lums ためてから%sへその場回転します",
+                 (unsigned long)TROUBLE_BACK_MS, (unsigned long)WANDER_RECOVER_PAUSE_MS,
+                 Motion_TurnName(recoverKind_));
+      ChangeState(STATE_RECOVER_PAUSE, nowMs);
+      return;
+
+    case STATE_RECOVER_PAUSE:
+      // なめらか加減速の出力は0だが、車体はまだ慣性で動いているかもしれないので、
+      // 間を置いてから回転を始める（ブラウンアウト対策。2026-09-22）
+      if (nowMs - stateStartMs_ < WANDER_RECOVER_PAUSE_MS) {
+        return;
+      }
       Motion_StartTurn(recoverKind_, nowMs);
       ChangeState(STATE_RECOVER_TURN, nowMs);
       return;
