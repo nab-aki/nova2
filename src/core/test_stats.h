@@ -42,8 +42,17 @@ void TestStats_RecordTroubleCleared(void);
 // ID15：一周しても空かず、あきらめた
 void TestStats_RecordTroubleGiveup(void);
 
+// ID25：片側旋回を実施した（歩き出す前に、横が近いので向きを変え始めた）
+void TestStats_RecordPivotPerformed(void);
+
 // ID25：片側旋回が途中で止められた（交代・安全層のどちらも）
 void TestStats_RecordPivotInterrupted(void);
+
+// ID25：後退+その場回転（横がとても近いときの張りつき対策）を実施した
+void TestStats_RecordRecoverPerformed(void);
+
+// ID25：後退+その場回転が途中で交代された（優先度を上げてあるので、通常は一時停止のときだけ）
+void TestStats_RecordRecoverInterrupted(void);
 
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);

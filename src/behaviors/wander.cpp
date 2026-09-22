@@ -11,16 +11,18 @@
 
 const char *WanderBehavior::StateName(State state) {
   switch (state) {
-    case STATE_SETTLE:     return "ため";
-    case STATE_SCAN_FRONT: return "正面を測る";
-    case STATE_SCAN_LEFT:  return "左を測る";
-    case STATE_SCAN_RIGHT: return "右を測る";
-    case STATE_FACE_FRONT: return "正面へ戻す";
-    case STATE_AVOID:      return "片側旋回";
-    case STATE_READY:      return "歩き出す準備";
-    case STATE_ACCEL:      return "加速";
-    case STATE_CRUISE:     return "巡航";
-    default:               return "減速";
+    case STATE_SETTLE:        return "ため";
+    case STATE_SCAN_FRONT:    return "正面を測る";
+    case STATE_SCAN_LEFT:     return "左を測る";
+    case STATE_SCAN_RIGHT:    return "右を測る";
+    case STATE_FACE_FRONT:    return "正面へ戻す";
+    case STATE_AVOID:         return "片側旋回";
+    case STATE_RECOVER_BACK:  return "後退";
+    case STATE_RECOVER_TURN:  return "その場回転";
+    case STATE_READY:         return "歩き出す準備";
+    case STATE_ACCEL:         return "加速";
+    case STATE_CRUISE:        return "巡航";
+    default:                  return "減速";
   }
 }
 
@@ -36,12 +38,18 @@ int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   if (Pause_IsPaused()) {
     return 0;               // デバッグの一時停止中は動かない
   }
+  if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_TURN) {
+    // 横がとても近いときの後退+その場回転は、ID15 の立て直しと同じく
+    // 気づく（ID9、優先度30）に割り込まれず最後までやり切る（非常停止と持ち上げは安全層が別途扱う）
+    return PRIORITY_WANDER_RECOVER;
+  }
   return PRIORITY_WANDER;   // 既定の振る舞い。ほかに何もなければ常にこれ
 }
 
 // 最初（ため）からやり直す。持ち上げから戻ったときもここを通る
 void WanderBehavior::Restart(unsigned long nowMs) {
   pendingPivot_ = false;
+  pendingRecover_ = false;
   Motion_Stop(nowMs);
   ChangeState(STATE_SETTLE, nowMs);
 }
@@ -59,6 +67,12 @@ void WanderBehavior::onStop(unsigned long nowMs) {
                Obstacle_IsBlocked() ? "障害物ありのため ID9 に" : "ほかの振る舞い（デバッグ回転・一時停止など）に",
                Obstacle_LastCm());
     TestStats_RecordPivotInterrupted();
+  } else if (state_ == STATE_RECOVER_BACK || state_ == STATE_RECOVER_TURN) {
+    // 優先度 PRIORITY_WANDER_RECOVER（35）で気づく（30）には割り込まれないので、
+    // ここに来るのは一時停止など、優先度が0になる場合だけのはず
+    Log_Printf("うろうろ", "後退+その場回転の途中で交代しました（%lums で中断、%s）。向きは変わりきっていません",
+               nowMs - stateStartMs_, Pause_IsPaused() ? "一時停止のため" : "ほかの振る舞いに");
+    TestStats_RecordRecoverInterrupted();
   }
   Motion_Stop(nowMs);            // 回転中ならここで取り消される
   Neck_Release(NECK_OWNER_RANGE);
@@ -68,10 +82,23 @@ void WanderBehavior::onStop(unsigned long nowMs) {
 void WanderBehavior::Decide(unsigned long nowMs) {
   (void)nowMs;
   pendingPivot_ = false;
+  pendingRecover_ = false;
 
   Log_Printf("うろうろ", "見回し 正面 %.1fcm／左 %.1fcm／右 %.1fcm", frontCm_, leftCm_, rightCm_);
 
-  if (leftCm_ < WANDER_SIDE_NEAR_CM && rightCm_ > leftCm_) {
+  bool leftVeryNear = leftCm_ < WANDER_SIDE_VERY_NEAR_CM;
+  bool rightVeryNear = rightCm_ < WANDER_SIDE_VERY_NEAR_CM;
+
+  if (leftVeryNear || rightVeryNear) {
+    // 片側旋回は車体が前へふくらむので、とても近いと安全層に止められ続けて張りつく（2026-09-22 実測）。
+    // より近い側と反対へ、後退してからその場回転で離れる（どちらも安全層に止められない）
+    bool nearIsLeft = leftVeryNear && (!rightVeryNear || leftCm_ <= rightCm_);
+    pendingRecover_ = true;
+    recoverKind_ = nearIsLeft ? TURN_ROTATE_RIGHT : TURN_ROTATE_LEFT;
+    Log_Printf("うろうろ", "%sがとても近い（%.1fcm < %.0fcm）ので、後退してから%sへその場回転",
+               nearIsLeft ? "左" : "右", nearIsLeft ? leftCm_ : rightCm_, WANDER_SIDE_VERY_NEAR_CM,
+               nearIsLeft ? "右" : "左");
+  } else if (leftCm_ < WANDER_SIDE_NEAR_CM && rightCm_ > leftCm_) {
     pendingPivot_ = true;
     pivotKind_ = TURN_PIVOT_RIGHT;
     Log_Printf("うろうろ", "左が近い（%.1fcm < %.0fcm）ので右へ片側旋回 %lums",
@@ -149,7 +176,13 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       Neck_Release(NECK_OWNER_RANGE);
-      if (pendingPivot_) {
+      if (pendingRecover_) {
+        recoverBackStopping_ = false;
+        TestStats_RecordRecoverPerformed();
+        Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);
+        ChangeState(STATE_RECOVER_BACK, nowMs);
+      } else if (pendingPivot_) {
+        TestStats_RecordPivotPerformed();
         Motion_StartTurn(pivotKind_, nowMs);
         ChangeState(STATE_AVOID, nowMs);
       } else {
@@ -173,6 +206,36 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       }
       Motion_StopTurn(nowMs);
       pendingPivot_ = false;
+      ChangeState(STATE_READY, nowMs);
+      return;
+
+    case STATE_RECOVER_BACK:
+      // trouble.cpp の STATE_BACK と同じ2段階（後退→減速→静止を待つ）。値も ID15 と共通のものを使う
+      if (!recoverBackStopping_) {
+        if (nowMs - stateStartMs_ < TROUBLE_BACK_MS) {
+          return;
+        }
+        recoverBackStopping_ = true;
+        Motion_SetSpeed(0.0f, TROUBLE_BACK_RAMP_MS, nowMs);
+        return;
+      }
+      if (!Motion_IsAtTarget()) {
+        return;
+      }
+      Log_Printf("うろうろ", "後退 %lums：%sへその場回転します",
+                 (unsigned long)TROUBLE_BACK_MS, Motion_TurnName(recoverKind_));
+      Motion_StartTurn(recoverKind_, nowMs);
+      ChangeState(STATE_RECOVER_TURN, nowMs);
+      return;
+
+    case STATE_RECOVER_TURN:
+      // 1ステップ（その場回転。約30°）で終える。ID15 のような再判定ループはしない
+      // （このあと STATE_READY が障害物の有無を確かめてから歩き出す）
+      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(recoverKind_)) {
+        return;
+      }
+      Motion_StopTurn(nowMs);
+      pendingRecover_ = false;
       ChangeState(STATE_READY, nowMs);
       return;
 

@@ -15,7 +15,10 @@ struct TestRecord {
   uint16_t troubleStarts;     // ID15：立て直しを始めた回数
   uint16_t troubleCleared;    // ID15：正面が空いて戻った回数
   uint16_t troubleGiveups;    // ID15：あきらめた回数
+  uint16_t pivotPerformed;    // ID25：片側旋回を実施した回数
   uint16_t pivotInterrupted;  // ID25：片側旋回が途中で止められた回数
+  uint16_t recoverPerformed;    // ID25：後退+その場回転（張りつき対策）を実施した回数
+  uint16_t recoverInterrupted;  // ID25：後退+その場回転が途中で交代された回数
   uint16_t liftCount;         // 持ち上げを検知した回数
 };
 
@@ -60,10 +63,12 @@ static void SaveCurrent(unsigned long nowMs, const char *reason) {
   current.elapsedMs = nowMs - testStartMs;
   storage.ring[storage.headIndex] = current;
   Storage_Save(&storage, sizeof(storage));
-  Log_Printf("試験", "保存しました（%s。経過%lums 気づく停止%d回 困る開始%d/空き%d/あきらめ%d 旋回中断%d 持ち上げ%d）",
+  Log_Printf("試験", "保存しました（%s。経過%lums 気づく停止%d回 困る開始%d/空き%d/あきらめ%d "
+             "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d）",
              reason, current.elapsedMs, current.stopCount,
              current.troubleStarts, current.troubleCleared, current.troubleGiveups,
-             current.pivotInterrupted, current.liftCount);
+             current.pivotPerformed, current.pivotInterrupted,
+             current.recoverPerformed, current.recoverInterrupted, current.liftCount);
 }
 
 void TestStats_Setup(bool startPaused, unsigned long nowMs) {
@@ -162,11 +167,32 @@ void TestStats_RecordTroubleGiveup(void) {
   current.troubleGiveups++;
 }
 
+void TestStats_RecordPivotPerformed(void) {
+  if (!recording) {
+    return;
+  }
+  current.pivotPerformed++;
+}
+
 void TestStats_RecordPivotInterrupted(void) {
   if (!recording) {
     return;
   }
   current.pivotInterrupted++;
+}
+
+void TestStats_RecordRecoverPerformed(void) {
+  if (!recording) {
+    return;
+  }
+  current.recoverPerformed++;
+}
+
+void TestStats_RecordRecoverInterrupted(void) {
+  if (!recording) {
+    return;
+  }
+  current.recoverInterrupted++;
 }
 
 void TestStats_RecordLift(void) {
@@ -202,11 +228,13 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
   } else {
     snprintf(distPart, sizeof(distPart), "-");
   }
-  Log_Printf("試験", "[%d]%s 経過%lums 気づく:停止%d回(%s) 困る:開始%d/空き%d/あきらめ%d うろうろ:旋回中断%d回 持ち上げ%d回",
+  Log_Printf("試験", "[%d]%s 経過%lums 気づく:停止%d回(%s) 困る:開始%d/空き%d/あきらめ%d "
+             "うろうろ:旋回 実施%d/中断%d 後退回転 実施%d/中断%d 持ち上げ%d回",
              slot, isRecording ? "（記録中）" : (live ? "（保存待ち）" : ""),
              elapsedMs, r.stopCount, distPart,
              r.troubleStarts, r.troubleCleared, r.troubleGiveups,
-             r.pivotInterrupted, r.liftCount);
+             r.pivotPerformed, r.pivotInterrupted,
+             r.recoverPerformed, r.recoverInterrupted, r.liftCount);
 }
 
 void TestStats_Print(unsigned long nowMs) {
