@@ -6,6 +6,7 @@
 #include "../core/obstacle.h"
 #include "../core/safety.h"
 #include "../core/test_stats.h"
+#include "../core/trace.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
@@ -24,6 +25,7 @@ void TroubleBehavior::ChangeState(State next, unsigned long nowMs) {
   Log_Printf("困る", "%s→%s", StateName(state_), StateName(next));
   state_ = next;
   stateStartMs_ = nowMs;
+  Trace_Mark(name(), StateName(next), nowMs);   // 足あと（再起動しても残る）
 }
 
 // ID9 の反応が終わっても塞がったままなら引き継ぐ。いちど始めたら、
@@ -49,6 +51,7 @@ void TroubleBehavior::StartSequence(unsigned long nowMs) {
   backStartCm_ = Obstacle_LastCm();
   state_ = STATE_BACK;
   stateStartMs_ = nowMs;
+  Trace_Mark(name(), StateName(STATE_BACK), nowMs);   // ChangeState を通らないので、ここで足あとに残す
   Log_Printf("困る", "正面が塞がったまま（%.1fcm）。立て直します", backStartCm_);
   TestStats_RecordTroubleStart();
   Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);

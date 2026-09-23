@@ -30,8 +30,10 @@ void TestStats_OnPauseToggle(bool paused, unsigned long nowMs);
 // ------------------------ 集計イベントの記録 ------------------------ //
 // 記録中（再開してから一時停止するまでの間）でなければ、呼んでも何もしない。
 
-// ID9：気づいて停止したときの、停止後の距離（cm）。測れなかったときは負を渡す
-void TestStats_RecordNoticeStop(float restCm);
+// ID9：気づいて停止したときの、停止後の距離（cm）。測れなかったときは負を渡す。
+// whileTurning：回転中に気づいたか（回転中の検知は stopCount には含めつつ、内訳として別に数える。
+// Motion_StartTurn() が速度スムーザーを0に戻すため、走っているときの判定とは別に見る必要がある）
+void TestStats_RecordNoticeStop(float restCm, bool whileTurning);
 
 // ID15：立て直しを始めた（StartSequence。あきらめ後の再挑戦・持ち上げ後の再開も含む）
 void TestStats_RecordTroubleStart(void);

@@ -42,8 +42,11 @@ void NoticeBehavior::EnterNoticed(unsigned long nowMs) {
   noticedCm_ = Obstacle_LastCm();
   noticedSpeedOk_ = Obstacle_ApproachSpeed(&noticedSpeed_);
   // 安全層が止めるのはこの後（loop の順番）なので、ここでは気づいた瞬間の速度が読める。
-  // 止まっているときに気づいた（目の前に物を置かれた）ぶんは、完了条件の回数に数えない
+  // 止まっているときに気づいた（目の前に物を置かれた）ぶんは、完了条件の回数に数えない。
+  // 回転中は Motion_StartTurn() が速度スムーザーを0に戻しているため noticedWhileMoving_ では
+  // 拾えない。下の Motion_SetSpeed() が回転を取り消す前に Motion_IsTurning() を見て別に記録する
   noticedWhileMoving_ = fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON;
+  noticedWhileTurning_ = Motion_IsTurning();
   state_ = STATE_NOTICED;
   noticedAtMs_ = nowMs;
   clearTimerOn_ = false;
@@ -65,19 +68,21 @@ void NoticeBehavior::ReportStop(unsigned long nowMs) {
   float restCm = Obstacle_LastCm();
   float slide = (noticedCm_ >= 0.0f && restCm >= 0.0f) ? (noticedCm_ - restCm) : -1.0f;
 
-  if (!noticedWhileMoving_) {
+  bool countable = noticedWhileMoving_ || noticedWhileTurning_;
+  if (!countable) {
     Log_Printf("気づく", "停止後の距離 %.1fcm（止まっているときに気づいたので、通算には数えません）", restCm);
     return;
   }
 
   stopCount_++;
-  TestStats_RecordNoticeStop(restCm);
+  TestStats_RecordNoticeStop(restCm, noticedWhileTurning_);
+  const char *turnNote = noticedWhileTurning_ ? "、回転中の検知として別途カウント" : "";
   if (slide >= 0.0f) {
-    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm）通算%d回目",
-               restCm, noticedCm_, slide, OBSTACLE_STOP_CM, stopCount_);
+    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm%s）通算%d回目",
+               restCm, noticedCm_, slide, OBSTACLE_STOP_CM, turnNote, stopCount_);
   } else {
-    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、閾値 %.0fcm）通算%d回目",
-               restCm, noticedCm_, OBSTACLE_STOP_CM, stopCount_);
+    Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、閾値 %.0fcm%s）通算%d回目",
+               restCm, noticedCm_, OBSTACLE_STOP_CM, turnNote, stopCount_);
   }
   const float contactWarnCm = 10.0f;   // 非常停止の 12cm より下。ここまで近いと接触を疑う
   if (restCm >= 0.0f && restCm < contactWarnCm) {

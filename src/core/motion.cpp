@@ -139,6 +139,13 @@ TurnKind Motion_GetTurnKind(void) {
   return turnKind;
 }
 
+int Motion_GetTurnPwm(void) {
+  if (!turning) {
+    return 0;
+  }
+  return turnKicking ? TurnKickPwm(turnKind) : TurnHoldPwm(turnKind);
+}
+
 void Motion_Update(unsigned long nowMs) {
   // 回転中は直進の出力をしない。キック→保持の切り替えは、間隔を待たずに毎ループ見る
   if (turning) {

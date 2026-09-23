@@ -31,6 +31,7 @@
 #include "core/safety.h"
 #include "core/sensors.h"
 #include "core/test_stats.h"
+#include "core/trace.h"
 #include "core/turn_tuning.h"
 #include "hal/hal.h"
 #include "hal/hal_log.h"
@@ -105,7 +106,7 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
   Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
   Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
-  Log_Printf("キー", "t:試験の集計を表示  h:試験の集計を今すぐ保存（止まっているときだけ）  x:集計を消去（5秒以内に2回）");
+  Log_Printf("キー", "t:試験の集計と、落ちる直前の流れ（足あと）を表示  h:試験の集計を今すぐ保存（止まっているときだけ）  x:集計と足あとを消去（5秒以内に2回）");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -213,7 +214,10 @@ static void HandleSerialKeys(void) {
         TurnTuning_Print(false, true);
         TurnTuning_Print(true, true);
         break;
-      case 't': TestStats_Print(now); break;
+      case 't':
+        TestStats_Print(now);
+        Trace_Print();
+        break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;
@@ -234,6 +238,14 @@ void setup() {
   uint8_t resetCode = Reset_ReasonCode();
   Log_Printf("起動", "リセット理由：%s%s", Reset_ReasonName(resetCode),
              Reset_IsBrownout(resetCode) ? "（電池切れ・電圧低下の疑い。試験の集計にも残ります）" : "");
+
+  // 前回のブートの足あとを取り出す（RTCメモリ。ブラウンアウトでは消えない）。
+  // 落ちていたときは、何をしている最中だったかをここで出し、モーターが止まっている今のうちに
+  // NVS へも写す（RAM の控えは、次のリセット＝モニタを開いたときの DTR/RTS などで消えるため）
+  Trace_Setup(resetCode, millis());
+  if (Reset_IsBrownout(resetCode)) {
+    Trace_PrintPrevious("落ちる直前の流れ");
+  }
 
   randomSeed(esp_random());
 
@@ -284,6 +296,7 @@ void loop() {
 
   Eyes_Update(now);
   Motion_Update(now);
+  Trace_Update(now);       // 足あとに「ここまで生きていた」と、いまのモーターの出力を刻む
   TestStats_Update(now);   // 止まっているときだけ、試験の集計をフラッシュへ保存する
 
   if (now - lastStatusMs >= STATUS_PRINT_INTERVAL_MS) {

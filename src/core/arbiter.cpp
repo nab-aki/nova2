@@ -1,6 +1,7 @@
 #include "arbiter.h"
 
 #include "../hal/hal_log.h"
+#include "trace.h"
 
 static Behavior *behaviors[ARBITER_MAX_BEHAVIORS];
 static uint8_t behaviorCount = 0;
@@ -44,6 +45,10 @@ void Arbiter_Update(const SensorData &sensors, unsigned long nowMs) {
       Log_Printf("調停", "%s: %s→%s", LAYER_NAMES[layer],
                  active[layer] ? active[layer]->name() : "なし",
                  best ? best->name() : "なし");
+      if (layer == LAYER_BODY) {
+        // 足あとに残すのは車体だけ（目はまばたきで頻繁に変わり、車体の記録を押し出してしまう）
+        Trace_Mark(best ? best->name() : "なし", "交代", nowMs);
+      }
       if (active[layer]) {
         active[layer]->onStop(nowMs);
       }

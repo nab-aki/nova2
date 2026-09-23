@@ -6,6 +6,7 @@
 #include "../core/obstacle.h"
 #include "../core/safety.h"
 #include "../core/test_stats.h"
+#include "../core/trace.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
 
@@ -31,6 +32,7 @@ void WanderBehavior::ChangeState(State next, unsigned long nowMs) {
   Log_Printf("うろうろ", "%s→%s", StateName(state_), StateName(next));
   state_ = next;
   stateStartMs_ = nowMs;
+  Trace_Mark(name(), StateName(next), nowMs);   // 足あと（再起動しても残る）
 }
 
 int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {

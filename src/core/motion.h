@@ -47,6 +47,7 @@ void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
 void Motion_StopTurn(unsigned long nowMs);
 bool Motion_IsTurning(void);
 bool Motion_IsPivoting(void);     // 片側旋回か（車体が前へふくらむので、安全層が止める対象）
+int Motion_GetTurnPwm(void);      // いま回転に出しているPWM（キック中はキック、そのあとは保持）。回転していなければ0
 TurnKind Motion_GetTurnKind(void);
 const char *Motion_TurnName(TurnKind kind);
 

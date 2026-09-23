@@ -5,12 +5,14 @@
 #include "../hal/hal_reset.h"
 #include "../hal/hal_storage.h"
 #include "motion.h"
+#include "trace.h"
 
 // 1回の試験の集計値。NVSにもこのまま保存する（構造を変えたら古い保存値は読み捨てられる）
 struct TestRecord {
   uint32_t elapsedMs;         // 経過時間（最後に保存した時点まで）
   uint8_t startResetCode;     // この試験が始まったブートの、起動時のリセット理由（Reset_ReasonCode）
-  uint16_t stopCount;         // ID9：気づいて停止した回数
+  uint16_t stopCount;         // ID9：気づいて停止した回数（走行中・回転中の両方を含む）
+  uint16_t stopWhileTurning;  // うち、回転中に気づいた回数（内訳。Motion_IsTurning() で判定）
   uint16_t stopDistUnknown;   // うち、停止後の距離が測れなかった回数
   float stopDistSumCm;        // 測れた分の合計（平均用）
   float stopDistMinCm;        // 測れた分の最小
@@ -67,10 +69,11 @@ static void BeginNewTest(unsigned long nowMs) {
 static void SaveCurrent(unsigned long nowMs, const char *reason) {
   current.elapsedMs = nowMs - testStartMs;
   storage.ring[storage.headIndex] = current;
-  Storage_Save(&storage, sizeof(storage));
-  Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回 困る開始%d/空き%d/あきらめ%d "
+  Storage_Save(STORAGE_KEY_TEST_STATS, &storage, sizeof(storage));
+  Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回(回転中%d回) 困る開始%d/空き%d/あきらめ%d "
              "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d）",
              reason, Reset_ReasonName(current.startResetCode), current.elapsedMs, current.stopCount,
+             current.stopWhileTurning,
              current.troubleStarts, current.troubleCleared, current.troubleGiveups,
              current.pivotPerformed, current.pivotInterrupted,
              current.recoverPerformed, current.recoverInterrupted, current.liftCount);
@@ -82,7 +85,7 @@ void TestStats_Setup(bool startPaused, unsigned long nowMs) {
   bootResetCode = Reset_ReasonCode();
   ResetRecord(&current);
 
-  if (!Storage_Load(&storage, sizeof(storage)) || storage.magic != TEST_STATS_MAGIC) {
+  if (!Storage_Load(STORAGE_KEY_TEST_STATS, &storage, sizeof(storage)) || storage.magic != TEST_STATS_MAGIC) {
     storage.magic = TEST_STATS_MAGIC;
     storage.headIndex = 0;
     storage.validCount = 0;
@@ -137,11 +140,14 @@ void TestStats_OnPauseToggle(bool paused, unsigned long nowMs) {
   BeginNewTest(nowMs);
 }
 
-void TestStats_RecordNoticeStop(float restCm) {
+void TestStats_RecordNoticeStop(float restCm, bool whileTurning) {
   if (!recording) {
     return;
   }
   current.stopCount++;
+  if (whileTurning) {
+    current.stopWhileTurning++;
+  }
   if (restCm < 0.0f) {
     current.stopDistUnknown++;
     return;
@@ -234,11 +240,11 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
   } else {
     snprintf(distPart, sizeof(distPart), "-");
   }
-  Log_Printf("試験", "[%d]%s 起動:%s 経過%lums 気づく:停止%d回(%s) 困る:開始%d/空き%d/あきらめ%d "
+  Log_Printf("試験", "[%d]%s 起動:%s 経過%lums 気づく:停止%d回(うち回転中%d回)(%s) 困る:開始%d/空き%d/あきらめ%d "
              "うろうろ:旋回 実施%d/中断%d 後退回転 実施%d/中断%d 持ち上げ%d回",
              slot, isRecording ? "（記録中）" : (live ? "（保存待ち）" : ""),
              Reset_ReasonName(r.startResetCode),
-             elapsedMs, r.stopCount, distPart,
+             elapsedMs, r.stopCount, r.stopWhileTurning, distPart,
              r.troubleStarts, r.troubleCleared, r.troubleGiveups,
              r.pivotPerformed, r.pivotInterrupted,
              r.recoverPerformed, r.recoverInterrupted, r.liftCount);
@@ -263,7 +269,8 @@ void TestStats_Print(unsigned long nowMs) {
 }
 
 static void ClearAll(unsigned long nowMs) {
-  Storage_Clear();
+  Storage_Clear(STORAGE_KEY_TEST_STATS);
+  Trace_ClearSaved();   // 保存してある「落ちる直前の流れ」も、x でいっしょに消す
   storage.headIndex = 0;
   storage.validCount = 0;
   for (int i = 0; i < 3; i++) {
