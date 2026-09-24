@@ -56,19 +56,16 @@
 
 ## 2. 次にやること（順番）
 
-1. **その前に：`Motion_IsTurning()` が片側旋回で本当に true を拾えているかの確認**
-   （2026-09-23の5分間試験で、ID9停止11回のうち「回転中」がずっと0回だったため）。
-   - **原因の見込み（コードで確認済み）**：`core/arbiter.cpp` の `Arbiter_Update()` は、同じレイヤーの
-     振る舞いが交代するとき「古い振る舞いの `onStop()` → 新しい振る舞いの `onStart()`」の順で呼ぶ。
-     `WanderBehavior::onStop()`（[wander.cpp:80](src/behaviors/wander.cpp#L80)）は状態に関わらず
-     無条件で `Motion_Stop(nowMs)` を呼んでおり、コメントにも「回転中ならここで取り消される」とある。
-     つまり ID9 が片側旋回に割り込むときは、`NoticeBehavior::onStart()`（`EnterNoticed()`）が
-     `Motion_IsTurning()` を読む**前**に、その場で `turning=false` にリセットされてしまう。
-     これが「回転中0回」のまま変わらない実際の原因である可能性が高い。
-   - `Motion_IsTurning()` 自体が片側旋回で true になること（`TurnKind` によらず一律 `turning=true`）は
-     コードレベルで確認済み（2026-09-22、Motion_StartTurn実装確認）。問題は**タイミング**の方。
-   - 直すなら、Wanderの`onStop()`が回転を取り消す**前**の状態（回転していたかどうか）を、
-     NoticeBehavior側に渡す・別の場所で判定するなどの案が考えられる（要検討）。
+1. **修正済み（f11e1ff）、実機確認待ち：次の5分間試験で「うち回転中」が1以上か見る**
+   （2026-09-23の5分間試験で、ID9停止11回のうち「回転中」がずっと0回だった件）。
+   - 原因：調停の交代順（古い振る舞いの `onStop()` → 新しい振る舞いの `onStart()`）で、
+     `WanderBehavior::onStop()`（[wander.cpp:80](src/behaviors/wander.cpp#L80)）の
+     `Motion_Stop()` が片側旋回を取り消してから、`NoticeBehavior::onStart()` が
+     `Motion_IsTurning()` を読んでいたため、常に false になっていた。
+   - 対策：`core/motion` に「直進・停止の指示で回転が取り消された時刻」を残す
+     `Motion_TurnCanceledAt(nowMs)` を追加。調停は `onStop()`・`onStart()` に同じ `nowMs` を
+     渡すため、ID9 は「回転中、または同じ周回で回転が取り消された」を回転中として数える
+     （decisions.md 2026-09-24（#9）参照）。
 2. **回転の値をまとめて見直す**（「片側旋回の値の見直し」に、キック時間短縮による回転角の実測も統合）：
    - その場回転：キック300msでの1ステップの角度を測り直す（`TROUBLE_MAX_STEPS` 12回も見直す）。
    - 片側旋回：保持（1450）がキック（1400）より大きく、キックの意味が薄い（実質 1450 一定）。
