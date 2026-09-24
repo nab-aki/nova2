@@ -148,7 +148,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       frontCm_ = scan_.cm();
-      scan_.begin(SERVO1_FRONT_DEG - WANDER_SCAN_PAN_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+      scan_.begin(SCAN_LEFT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_LEFT, nowMs);
       return;
 
@@ -157,7 +157,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       leftCm_ = scan_.cm();
-      scan_.begin(SERVO1_FRONT_DEG + WANDER_SCAN_PAN_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+      scan_.begin(SCAN_RIGHT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_RIGHT, nowMs);
       return;
 

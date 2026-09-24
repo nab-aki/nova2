@@ -57,6 +57,8 @@ class TroubleBehavior : public Behavior {
 
   float leftCm_ = 0.0f;
   float rightCm_ = 0.0f;
+  int leftValid_ = 0;           // 左右それぞれ、測れた回数（0なら「測れず」。cm は ULTRASONIC_MAX_CM になっている）
+  int rightValid_ = 0;
   bool lastTurnLeft_ = false;   // 前回どちらへ回ったか（差が小さいときは反対を選ぶ）
   TurnKind turnKind_ = TURN_ROTATE_LEFT;
   int steps_ = 0;               // この立て直しで回った回数

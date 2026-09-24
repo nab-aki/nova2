@@ -70,11 +70,24 @@ void TroubleBehavior::onStop(unsigned long nowMs) {
 }
 
 // 左右のうち遠いほうへ回る。差が小さいときは前回と反対側にする
-// （行き止まりで同じ動きを繰り返さないため）
+// （行き止まりで同じ動きを繰り返さないため）。
+// 測れなかった側は「遠い」とみなさない（浅い角度の壁はエコーが返らず、壁側を選んでしまうため）
 void TroubleBehavior::Decide(unsigned long nowMs) {
   (void)nowMs;
   bool turnLeft;
-  if (fabsf(leftCm_ - rightCm_) < TROUBLE_SIDE_DIFF_CM) {
+  bool leftKnown = leftValid_ > 0;
+  bool rightKnown = rightValid_ > 0;
+  if (!leftKnown && !rightKnown) {
+    turnLeft = !lastTurnLeft_;
+    Log_Printf("困る", "左右とも測れなかったので前回と反対の%sへ", turnLeft ? "左" : "右");
+  } else if (leftKnown != rightKnown) {
+    float knownCm = leftKnown ? leftCm_ : rightCm_;
+    bool knownFar = knownCm >= TROUBLE_KNOWN_FAR_CM;
+    turnLeft = (leftKnown == knownFar);   // 測れた側が十分遠ければ測れた側、近ければ測れなかった側
+    Log_Printf("困る", "%sは測れず、%sは %.1fcm（%s %.0fcm）なので%sへその場回転",
+               leftKnown ? "右" : "左", leftKnown ? "左" : "右", knownCm,
+               knownFar ? "≧" : "<", TROUBLE_KNOWN_FAR_CM, turnLeft ? "左" : "右");
+  } else if (fabsf(leftCm_ - rightCm_) < TROUBLE_SIDE_DIFF_CM) {
     turnLeft = !lastTurnLeft_;
     Log_Printf("困る", "左右の差が小さい（左%.1fcm 右%.1fcm、差%.1fcm）ので前回と反対の%sへ",
                leftCm_, rightCm_, fabsf(leftCm_ - rightCm_), turnLeft ? "左" : "右");
@@ -131,7 +144,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
           Log_Printf("困る", "後退 %lums（前後の距離が測れませんでした）", (unsigned long)TROUBLE_BACK_MS);
         }
       }
-      scan_.begin(SERVO1_FRONT_DEG - WANDER_SCAN_PAN_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+      scan_.begin(SCAN_LEFT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_LEFT, nowMs);
       return;
 
@@ -140,7 +153,8 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       leftCm_ = scan_.cm();
-      scan_.begin(SERVO1_FRONT_DEG + WANDER_SCAN_PAN_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+      leftValid_ = scan_.validCount();
+      scan_.begin(SCAN_RIGHT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_RIGHT, nowMs);
       return;
 
@@ -149,7 +163,9 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       rightCm_ = scan_.cm();
-      Log_Printf("困る", "左 %.1fcm／右 %.1fcm", leftCm_, rightCm_);
+      rightValid_ = scan_.validCount();
+      Log_Printf("困る", "左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d）",
+                 leftCm_, leftValid_, WANDER_SCAN_SAMPLES, rightCm_, rightValid_, WANDER_SCAN_SAMPLES);
       Decide(nowMs);
       Neck_Release(NECK_OWNER_RANGE);   // 回る間は安全層が首を正面に固定する
       StartTurnStep(nowMs);

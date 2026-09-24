@@ -51,6 +51,9 @@
 #define SERVO1_FRONT_DEG            84      // 実測：servo1（左右）の正面
 #define SERVO1_MIN_DEG              20      // 実測：servo1 の可動範囲（仕様上は 0〜180）
 #define SERVO1_MAX_DEG              140
+// 実測（2026-09-24）：servo1 は角度を大きくすると Nova の左を向く（左右は Nova 自身から見た向き）。
+// 首を左右に向ける角度は、この符号を通して決める（直接 ± を書かない）
+#define SERVO1_LEFT_SIGN            (+1)
 #define SERVO2_LEVEL_DEG            98      // 実測：超音波が水平になる servo2 の角度（M2案で測定）
 #define SERVO2_MIN_DEG              90      // 実測：servo2 の可動範囲（仕様上は 90〜150）
 #define SERVO2_MAX_DEG              140
@@ -202,6 +205,8 @@
 // 実測の安定時間（±55°で最長160ms）にも収まる ±50° にした（docs/specs/25_wander.md）。
 #define WANDER_REST_MS              800     // 止まってから見回しを始めるまでの「ため」
 #define WANDER_SCAN_PAN_DEG         50      // 左右を見る角度（正面±）。servo1 は 34〜134°
+#define SCAN_LEFT_DEG               (SERVO1_FRONT_DEG + SERVO1_LEFT_SIGN * WANDER_SCAN_PAN_DEG)   // 134°（ID25・ID15 共通）
+#define SCAN_RIGHT_DEG              (SERVO1_FRONT_DEG - SERVO1_LEFT_SIGN * WANDER_SCAN_PAN_DEG)   // 34°
 #define WANDER_SCAN_SAMPLES         3       // 1方向あたりの測距回数（最も近い値を採る）
 #define WANDER_SIDE_NEAR_CM         40.0f   // 横がこれより近ければ、反対側へ向きを変える
                                             // 斜め50°の距離なので、壁が平行なら横の実距離は 40×sin50°≒31cm
@@ -227,6 +232,9 @@
 #define TROUBLE_BACK_MS             500     // 後退する時間（推定10〜15cm。実機で測って詰める）
 #define TROUBLE_BACK_RAMP_MS        300     // 後退の加速・減速にかける時間
 #define TROUBLE_SIDE_DIFF_CM        10.0f   // 左右の差がこれ未満なら「甲乙つけがたい」
+// 片側だけ測れなかったとき（浅い角度の壁はエコーが返らない）、測れた側がこれ以上なら測れた側へ、
+// これ未満なら測れなかった側へ回る（測れなかった側を「遠い」とはみなさない。2026-09-24）
+#define TROUBLE_KNOWN_FAR_CM        50.0f
 #define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
                                             // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
