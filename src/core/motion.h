@@ -46,6 +46,10 @@ bool Motion_IsStill(void);
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
 void Motion_StopTurn(unsigned long nowMs);
 bool Motion_IsTurning(void);
+// 時刻 nowMs に、直進・停止の指示（Motion_SetSpeed／Motion_Stop）で回転が取り消されたか。
+// 調停は交代時の onStop()・onStart() に同じ nowMs を渡すので、onStart() から
+// 「直前の振る舞いが回転中だったか」を判定できる（Motion_StopTurn・非常停止は含まない）
+bool Motion_TurnCanceledAt(unsigned long nowMs);
 bool Motion_IsPivoting(void);     // 片側旋回か（車体が前へふくらむので、安全層が止める対象）
 int Motion_GetTurnPwm(void);      // いま回転に出しているPWM（キック中はキック、そのあとは保持）。回転していなければ0
 TurnKind Motion_GetTurnKind(void);

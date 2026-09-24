@@ -16,6 +16,11 @@ static TurnKind turnKind = TURN_ROTATE_LEFT;
 static bool turnKicking = false;      // キック（動き出し）の最中か
 static unsigned long turnStartMs = 0;
 
+// 直進・停止の指示で回転が取り消された時刻。調停の交代では、古い振る舞いの onStop() が
+// 回転を取り消してから新しい振る舞いの onStart() が呼ばれるので、「交代の直前まで回っていたか」を後から読めるように残す
+static bool turnCanceledValid = false;
+static unsigned long turnCanceledMs = 0;
+
 // 直進中の速度の揺らぎ。周期の違う2つの波を重ねて、機械的に見えないようにする
 static float Wobble(unsigned long nowMs, float speed) {
   float magnitude = fabsf(speed);
@@ -87,6 +92,10 @@ void Motion_Setup(void) {
 }
 
 void Motion_SetSpeed(float target, unsigned long rampMs, unsigned long nowMs) {
+  if (turning) {
+    turnCanceledValid = true;
+    turnCanceledMs = nowMs;
+  }
   CancelTurn(nowMs, "取り消し（直進の指示が来た）");   // 直進と回転は同時に使わない
   target = constrain(target, -1.0f, 1.0f);
   if (target != speedSmoother.target()) {
@@ -129,6 +138,10 @@ void Motion_StopTurn(unsigned long nowMs) {
 
 bool Motion_IsTurning(void) {
   return turning;
+}
+
+bool Motion_TurnCanceledAt(unsigned long nowMs) {
+  return turnCanceledValid && turnCanceledMs == nowMs;
 }
 
 bool Motion_IsPivoting(void) {

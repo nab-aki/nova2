@@ -44,9 +44,10 @@ void NoticeBehavior::EnterNoticed(unsigned long nowMs) {
   // 安全層が止めるのはこの後（loop の順番）なので、ここでは気づいた瞬間の速度が読める。
   // 止まっているときに気づいた（目の前に物を置かれた）ぶんは、完了条件の回数に数えない。
   // 回転中は Motion_StartTurn() が速度スムーザーを0に戻しているため noticedWhileMoving_ では
-  // 拾えない。下の Motion_SetSpeed() が回転を取り消す前に Motion_IsTurning() を見て別に記録する
+  // 拾えないので別に記録する。ID25 の片側旋回に割り込むときは、調停がこの onStart() より先に
+  // WanderBehavior::onStop() を呼んで回転を取り消しているため、同じ周回での取り消しも回転中とみなす
   noticedWhileMoving_ = fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON;
-  noticedWhileTurning_ = Motion_IsTurning();
+  noticedWhileTurning_ = Motion_IsTurning() || Motion_TurnCanceledAt(nowMs);
   state_ = STATE_NOTICED;
   noticedAtMs_ = nowMs;
   clearTimerOn_ = false;

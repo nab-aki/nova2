@@ -54,7 +54,7 @@ class NoticeBehavior : public Behavior {
   bool noticedSpeedOk_ = false;
   bool noticedWhileMoving_ = false;  // 走っているときに気づいたか（止まったまま気づいた分は数えない）
   bool noticedWhileTurning_ = false; // 回転中に気づいたか（Motion_StartTurn がスムーザーを0に戻すため、
-                                      // noticedWhileMoving_ とは別に Motion_IsTurning() で見る）
+                                      // noticedWhileMoving_ とは別に Motion_IsTurning()・Motion_TurnCanceledAt() で見る）
   int stopCount_ = 0;            // 起動からの通算の停止回数（完了条件の確認用）
 };
 
