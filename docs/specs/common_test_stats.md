@@ -25,9 +25,9 @@ ID には紐づかない共通部品（#0）。ID9・ID15・ID25・安全層（�
 | ID15：立て直しを始めた回数 | `TroubleBehavior::StartSequence()`（あきらめ後の再挑戦・持ち上げ後の再開も含めて数える） |
 | ID15：正面が空いて戻った回数 | `TroubleBehavior::onUpdate()` の `STATE_CHECK`、「空いた」と判定する分岐 |
 | ID15：あきらめた回数 | 同上、`steps_ >= TROUBLE_MAX_STEPS` で休みに入る分岐 |
-| ID25：片側旋回を実施した回数 | `WanderBehavior::onUpdate()` の `STATE_FACE_FRONT`、片側旋回を始める分岐 |
-| ID25：片側旋回が途中で止められた回数 | `WanderBehavior::onStop()`（他の振る舞いに交代）と `onUpdate()` の `STATE_AVOID`
-  （安全層に止められた）。どちらも「片側旋回…中断」とログを出す分岐と同じ場所 |
+| ID25：横が近いときの向き変え（その場回転。2026-09-25まで片側旋回）を実施した回数 | `WanderBehavior::onUpdate()` の `STATE_FACE_FRONT`、向き変えを始める分岐 |
+| ID25：向き変えが途中で止められた回数 | `WanderBehavior::onStop()`（他の振る舞いに交代）と `onUpdate()` の `STATE_AVOID`
+  （回転が取り消された）。どちらも「向き変え…中断」とログを出す分岐と同じ場所 |
 | ID25：後退+その場回転（張りつき対策。25_wander.md）を実施した回数 | 同 `STATE_FACE_FRONT`、後退を始める分岐 |
 | ID25：後退+その場回転が途中で交代された回数 | `onStop()` の `STATE_RECOVER_BACK`／`STATE_RECOVER_TURN` 分岐。
   優先度を引き上げてある（25_wander.md）ので、通常は一時停止のときだけ増える |
@@ -72,7 +72,8 @@ TestRecord（1回分）
   stopDistUnknown        うち、距離が測れなかった回数
   stopDistSumCm/MinCm   測れた分の合計・最小（平均は表示時に計算）
   troubleStarts / troubleCleared / troubleGiveups   ID15 開始・空いた・あきらめ
-  pivotPerformed / pivotInterrupted     ID25 片側旋回の実施・中断回数
+  pivotPerformed / pivotInterrupted     ID25 横が近いときの向き変え（その場回転）の実施・中断回数
+                                        （変数名は片側旋回だった頃のまま。2026-09-25にその場回転へ置き換えた）
   recoverPerformed / recoverInterrupted ID25 後退+その場回転（張りつき対策）の実施・交代回数
   liftCount             持ち上げ回数
 

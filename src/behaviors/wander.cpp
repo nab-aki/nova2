@@ -17,7 +17,7 @@ const char *WanderBehavior::StateName(State state) {
     case STATE_SCAN_LEFT:     return "左を測る";
     case STATE_SCAN_RIGHT:    return "右を測る";
     case STATE_FACE_FRONT:    return "正面へ戻す";
-    case STATE_AVOID:         return "片側旋回";
+    case STATE_AVOID:         return "向き変え（その場回転）";
     case STATE_RECOVER_BACK:  return "後退";
     case STATE_RECOVER_PAUSE: return "ため（回転前）";
     case STATE_RECOVER_TURN:  return "その場回転";
@@ -51,7 +51,7 @@ int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
 
 // 最初（ため）からやり直す。持ち上げから戻ったときもここを通る
 void WanderBehavior::Restart(unsigned long nowMs) {
-  pendingPivot_ = false;
+  pendingAvoidTurn_ = false;
   pendingRecover_ = false;
   Motion_Stop(nowMs);
   ChangeState(STATE_SETTLE, nowMs);
@@ -62,10 +62,10 @@ void WanderBehavior::onStart(unsigned long nowMs) {
 }
 
 void WanderBehavior::onStop(unsigned long nowMs) {
-  // 片側旋回の途中で手放されたら、理由を1行残す。旋回中に障害物「あり」に変わると、
-  // ID9（優先度30）が割り込み、安全層も旋回を止める。そのあとは ID9・ID15 が引き継ぐ
+  // その場回転（向き変え）の途中で手放されたら、理由を1行残す。回転中に障害物「あり」に変わると、
+  // ID9（優先度30）が割り込む。そのあとは ID9・ID15 が引き継ぐ
   if (state_ == STATE_AVOID) {
-    Log_Printf("うろうろ", "片側旋回の途中で交代しました（%lums で中断、%s。距離 %.1fcm）。向きは変わりきっていません",
+    Log_Printf("うろうろ", "向き変え（その場回転）の途中で交代しました（%lums で中断、%s。距離 %.1fcm）。向きは変わりきっていません",
                nowMs - stateStartMs_,
                Obstacle_IsBlocked() ? "障害物ありのため ID9 に" : "ほかの振る舞い（デバッグ回転・一時停止など）に",
                Obstacle_LastCm());
@@ -84,7 +84,7 @@ void WanderBehavior::onStop(unsigned long nowMs) {
 // 見回しの結果から、歩き出す前に向きを変えるかを決める
 void WanderBehavior::Decide(unsigned long nowMs) {
   (void)nowMs;
-  pendingPivot_ = false;
+  pendingAvoidTurn_ = false;
   pendingRecover_ = false;
 
   Log_Printf("うろうろ", "見回し 正面 %.1fcm／左 %.1fcm／右 %.1fcm", frontCm_, leftCm_, rightCm_);
@@ -102,15 +102,15 @@ void WanderBehavior::Decide(unsigned long nowMs) {
                nearIsLeft ? "左" : "右", nearIsLeft ? leftCm_ : rightCm_, WANDER_SIDE_VERY_NEAR_CM,
                nearIsLeft ? "右" : "左");
   } else if (leftCm_ < WANDER_SIDE_NEAR_CM && rightCm_ > leftCm_) {
-    pendingPivot_ = true;
-    pivotKind_ = TURN_PIVOT_RIGHT;
-    Log_Printf("うろうろ", "左が近い（%.1fcm < %.0fcm）ので右へ片側旋回 %lums",
-               leftCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_PIVOT_RIGHT));
+    pendingAvoidTurn_ = true;
+    avoidTurnKind_ = TURN_ROTATE_RIGHT;
+    Log_Printf("うろうろ", "左が近い（%.1fcm < %.0fcm）ので右へその場回転 %lums",
+               leftCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_ROTATE_RIGHT));
   } else if (rightCm_ < WANDER_SIDE_NEAR_CM && leftCm_ > rightCm_) {
-    pendingPivot_ = true;
-    pivotKind_ = TURN_PIVOT_LEFT;
-    Log_Printf("うろうろ", "右が近い（%.1fcm < %.0fcm）ので左へ片側旋回 %lums",
-               rightCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_PIVOT_LEFT));
+    pendingAvoidTurn_ = true;
+    avoidTurnKind_ = TURN_ROTATE_LEFT;
+    Log_Printf("うろうろ", "右が近い（%.1fcm < %.0fcm）ので左へその場回転 %lums",
+               rightCm_, WANDER_SIDE_NEAR_CM, (unsigned long)TurnTuning_StepMs(TURN_ROTATE_LEFT));
   } else if (leftCm_ < WANDER_SIDE_NEAR_CM && rightCm_ < WANDER_SIDE_NEAR_CM) {
     Log_Printf("うろうろ", "左右とも近い（左%.1fcm 右%.1fcm）。避ける先がないのでそのまま前進",
                leftCm_, rightCm_);
@@ -184,9 +184,9 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         TestStats_RecordRecoverPerformed();
         Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);
         ChangeState(STATE_RECOVER_BACK, nowMs);
-      } else if (pendingPivot_) {
+      } else if (pendingAvoidTurn_) {
         TestStats_RecordPivotPerformed();
-        Motion_StartTurn(pivotKind_, nowMs);
+        Motion_StartTurn(avoidTurnKind_, nowMs);
         ChangeState(STATE_AVOID, nowMs);
       } else {
         ChangeState(STATE_READY, nowMs);
@@ -194,21 +194,21 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_AVOID:
-      // 安全層に旋回を止められた（非常停止距離未満など）。時間を待たずに旋回を終えて次へ進む。
-      // まだ「あり」なら、次のループで ID9 が引き継ぐ
+      // その場回転は安全層が障害物で止める対象ではないので、通常はここに来ない。
+      // 持ち上げなど、ほかの理由で回転が取り消されたときだけの保険（念のため残す）
       if (!Motion_IsTurning()) {
-        Log_Printf("うろうろ", "片側旋回が安全層に止められました（%lums で中断、距離 %.1fcm）。向きは変わりきっていません",
+        Log_Printf("うろうろ", "向き変え（その場回転）が途中で止まりました（%lums で中断、距離 %.1fcm）。向きは変わりきっていません",
                    nowMs - stateStartMs_, Obstacle_LastCm());
         TestStats_RecordPivotInterrupted();
-        pendingPivot_ = false;
+        pendingAvoidTurn_ = false;
         ChangeState(STATE_READY, nowMs);
         return;
       }
-      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(pivotKind_)) {
+      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(avoidTurnKind_)) {
         return;
       }
       Motion_StopTurn(nowMs);
-      pendingPivot_ = false;
+      pendingAvoidTurn_ = false;
       ChangeState(STATE_READY, nowMs);
       return;
 

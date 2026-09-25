@@ -2,8 +2,13 @@
 // 止まって首で見回し、空いていそうな向きへ歩き、また止まる、を繰り返す。
 // 車体レイヤーの既定の振る舞い（優先度がいちばん低い）。
 //
-//   [ため] → [正面] → [左] → [右] → [決める] →（横がとても近ければ後退+その場回転／近ければ片側旋回）
+//   [ため] → [正面] → [左] → [右] → [決める] →（横がとても近ければ後退+その場回転／近ければその場回転で向き変え）
 //        → [正面へ戻して安定を待つ] → [加速] → [巡航（ランダム）] → [減速] → [ため]
+//
+// 横が近いとき（WANDER_SIDE_NEAR_CM 未満、VERY_NEAR 以上）の向き変えは、2026-09-25 まで片側旋回を
+// 使っていたが、その場回転（1ステップ・約30°）に置き換えた。片側旋回は止める側が惰性で1回に約20cm
+// 前進しており、壁から離れたい場面でかえって近づいていたため（docs/decisions.md 2026-09-25）。
+// 片側旋回のコード自体は消さず、広い場所での方向転換として将来使い直す（docs/specs/25_wander.md）。
 //
 // 横がとても近い（WANDER_SIDE_VERY_NEAR_CM 未満）ときの後退+その場回転は、
 // 片側旋回が安全層に止められ続けて張りつく問題（2026-09-22 の5分間試験）への対策。
@@ -36,7 +41,7 @@ class WanderBehavior : public Behavior {
     STATE_SCAN_LEFT,     // 左を測る
     STATE_SCAN_RIGHT,    // 右を測る
     STATE_FACE_FRONT,    // 首を正面へ戻す
-    STATE_AVOID,         // 横が近いので片側旋回で向きを変える
+    STATE_AVOID,         // 横が近いのでその場回転で向きを変える（片側旋回は今は使わない）
     STATE_RECOVER_BACK,  // 横がとても近いので、少し後退する（張りつき対策）
     STATE_RECOVER_PAUSE, // 後退のあと、回転を始める前の「ため」（ブラウンアウト対策）
     STATE_RECOVER_TURN,  // 反対側へその場回転する
@@ -57,8 +62,8 @@ class WanderBehavior : public Behavior {
   float frontCm_ = 0.0f;
   float leftCm_ = 0.0f;
   float rightCm_ = 0.0f;
-  bool pendingPivot_ = false;      // 歩き出す前に片側旋回で向きを変えるか
-  TurnKind pivotKind_ = TURN_PIVOT_LEFT;
+  bool pendingAvoidTurn_ = false;  // 歩き出す前にその場回転で向きを変えるか（横が近いとき）
+  TurnKind avoidTurnKind_ = TURN_ROTATE_LEFT;
   bool pendingRecover_ = false;    // 歩き出す前に後退+その場回転で避けるか（横がとても近いとき）
   TurnKind recoverKind_ = TURN_ROTATE_LEFT;
   bool recoverBackStopping_ = false;  // 後退の減速に入ったか（trouble.cpp の backStopping_ と同じ考え方）
