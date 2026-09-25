@@ -44,3 +44,13 @@ void Ws2812_Off(void) {
   Ws2812_Fill(0, 0, 0);
   Ws2812_Show();
 }
+
+void Ws2812_ClearAtBoot(void) {
+  // 全消灯を1回だけ送る。以後は使わない扱い（active は false のまま）にして、
+  // GPIO32 は Battery_Setup() 以降の analogRead() でアナログ入力に戻る
+  if (active || !strip.begin()) {
+    return;
+  }
+  strip.setAllLedsColorData(0, 0, 0);
+  strip.show();
+}

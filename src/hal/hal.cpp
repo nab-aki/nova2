@@ -11,6 +11,7 @@ bool Hal_Setup(void) {
   Ir_Setup();        // リモコン（GPIO0）。GPIO割り込みとタイマー3を使う
   Buzzer_Setup();
   Light_Setup();
+  Ws2812_ClearAtBoot();   // 電源投入時に光ったままの WS2812 を消す。GPIO32 共用のため電池より前に1回だけ
   Battery_Setup();
   Storage_Setup();
   Reset_Setup();

@@ -26,4 +26,8 @@ void Ws2812_Show(void);
 // 全消灯して出力する
 void Ws2812_Off(void);
 
+// 起動時に1回だけ全消灯を送る（電源投入時に不定な色で光ったままになるのを消す）。
+// 以後は初期化していない扱いのままにする。Battery_Setup() より前に呼ぶ（Hal_Setup() から呼ぶ）
+void Ws2812_ClearAtBoot(void);
+
 #endif // NOVA_HAL_WS2812_H
