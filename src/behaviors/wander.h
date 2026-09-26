@@ -18,6 +18,8 @@
 //  間を置かず逆向きの回転を始めると大電流になりブラウンアウトを起こすため。2026-09-22）。
 //
 // 走行中に正面の障害物に気づいたら ID9 が、そのあとの立て直しは ID15 が引き継ぐ。
+// 巡航中の測距・巡航の終わり・見回しの結果は詰まりの見張り（core/stuck_watch.*）に渡し、
+// 進めていないと分かったら ID26 詰まり脱出が引き継ぐ。
 #ifndef NOVA_BEHAVIORS_WANDER_H
 #define NOVA_BEHAVIORS_WANDER_H
 
@@ -62,6 +64,9 @@ class WanderBehavior : public Behavior {
   float frontCm_ = 0.0f;
   float leftCm_ = 0.0f;
   float rightCm_ = 0.0f;
+  int frontValid_ = 0;             // 各方向、測れた回数（0なら「測れず」。ID26 の見張りに渡す）
+  int leftValid_ = 0;
+  int rightValid_ = 0;
   bool pendingAvoidTurn_ = false;  // 歩き出す前にその場回転で向きを変えるか（横が近いとき）
   TurnKind avoidTurnKind_ = TURN_ROTATE_LEFT;
   bool pendingRecover_ = false;    // 歩き出す前に後退+その場回転で避けるか（横がとても近いとき）

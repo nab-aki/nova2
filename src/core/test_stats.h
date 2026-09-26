@@ -16,6 +16,8 @@
 
 #include <Arduino.h>
 
+#include "stuck_watch.h"
+
 // NVSから読み込み、一時停止で始まらない設定なら、それ自体を最初の試験の開始として扱う
 void TestStats_Setup(bool startPaused, unsigned long nowMs);
 
@@ -58,6 +60,18 @@ void TestStats_RecordRecoverInterrupted(void);
 
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);
+
+// ID26：詰まりに気づいた（何で気づいたかの内訳も数える）
+void TestStats_RecordStuckDetected(StuckReason reason);
+
+// ID26：回転まで最後までやり切って脱出した（signalA：信号A で気づいた回か）
+void TestStats_RecordStuckEscaped(bool signalA);
+
+// ID26：脱出してから STUCK_REPEAT_MS 以内にまた詰まった（大きく回る）
+void TestStats_RecordStuckRepeat(void);
+
+// ID26：見回しが「同じ」が続いている時間（ms）。最長を残す
+void TestStats_RecordStuckUnchangedMs(unsigned long ms);
 
 // ------------------------ シリアルキー ------------------------ //
 

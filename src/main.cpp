@@ -4,9 +4,10 @@
 //   ・車体：止まって首で見回し、空いていそうな向きへ歩き、また止まる（ID25）
 //   ・正面の障害物に気づいたら即停止し、目を見開く（ID9）
 //   ・塞がったままなら、後退して左右を確かめ、その場回転で向きを変える（ID15）
+//   ・進めていない（詰まった）と気づいたら、「？」の目で考えてから後退とその場回転で抜け出す（ID26）
 //   ・持ち上げたら（ライントラッキング111）すぐモーターを止める（安全層）
 //   ・シリアル（115200bps）に、測距値・判定・首の状態・モーター状態を出力する
-//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる。p でうろうろを一時停止／再開
+//   ・シリアルの 3〜6 で、回転角の測定用に1ステップだけ回せる。7・8 は連続回転 90°（一時停止中だけ）。p でうろうろを一時停止／再開
 //     一時停止中は q a w s e d r f で回転の調整値（時間・キック・PWM）を変えられる（? でキー一覧）
 //
 // 構成：hal/（ハードウェア操作）→ core/（センサー集約・首・障害物・安全・動き・表情・調停）
@@ -19,6 +20,8 @@
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
 #include "behaviors/pause_cue.h"
+#include "behaviors/stuck.h"
+#include "behaviors/stuck_eyes.h"
 #include "behaviors/trouble.h"
 #include "behaviors/wander.h"
 #include "config.h"
@@ -43,6 +46,8 @@ static WanderBehavior wanderBehavior;
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
 static PauseCueBehavior pauseCueBehavior;
+static StuckBehavior stuckBehavior;
+static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
 
 static unsigned long lastStatusMs = 0;
 
@@ -100,10 +105,17 @@ static void PrintStatus(unsigned long nowMs) {
 // 回転の調整キーの対象。最後に押した回転キー（3・4 ならその場回転、5・6 なら片側旋回）か、g で選んだほう
 static bool tunePivot = false;
 
+// 連続したその場回転で DEBUG_CONT_TURN_DEG 回る時間（ID26 と同じ係数）
+static unsigned long ContTurnMs(void) {
+  return (unsigned long)(DEBUG_CONT_TURN_DEG * ROTATE_CONT_MS_PER_DEG + 0.5f);
+}
+
 static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %dms）", TurnTuning_StepMs(TURN_ROTATE_LEFT));
   Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %dms）", TurnTuning_StepMs(TURN_PIVOT_LEFT));
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
+  Log_Printf("キー", "7:連続その場回転 左  8:連続その場回転 右（%d°のつもりで %lums。一時停止中だけ。回った角度を測って ROTATE_CONT_MS_PER_DEG を直す）",
+             DEBUG_CONT_TURN_DEG, ContTurnMs());
   Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
   Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
   Log_Printf("キー", "t:試験の集計と、落ちる直前の流れ（足あと）を表示  h:試験の集計を今すぐ保存（止まっているときだけ）  x:集計と足あとを消去（5秒以内に2回）");
@@ -134,6 +146,10 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
     Log_Printf("キー", "立て直し（困る）の最中なので無視します");
     return;
   }
+  if (stuckBehavior.isBusy()) {
+    Log_Printf("キー", "詰まり脱出の最中なので無視します");
+    return;
+  }
   if (Motion_IsTurning() ||
       fabsf(Motion_GetSpeed()) >= MOTOR_SPEED_EPSILON ||
       fabsf(Motion_GetTarget()) >= MOTOR_SPEED_EPSILON) {
@@ -141,6 +157,15 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
     return;
   }
   debugTurnBehavior.request(kind, durationMs);
+}
+
+// 連続回転（キー 7・8）。一時停止中だけ受け付ける
+static void RequestContTurn(TurnKind kind) {
+  if (!Pause_IsPaused()) {
+    Log_Printf("キー", "連続回転は一時停止中（p）にしてから押してください");
+    return;
+  }
+  RequestDebugTurn(kind, ContTurnMs());
 }
 
 // 回転の調整キー。一時停止中だけ効き、回転の最中は受け付けない
@@ -196,6 +221,8 @@ static void HandleSerialKeys(void) {
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
       case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT));     break;
       case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT));   break;
+      case '7': tunePivot = false; RequestContTurn(TURN_ROTATE_LEFT);  break;
+      case '8': tunePivot = false; RequestContTurn(TURN_ROTATE_RIGHT); break;
       case 'p': TogglePause("キー p", now); break;
       case 'q': TuneKey(TUNE_STEP_MS, +1);  break;
       case 'a': TuneKey(TUNE_STEP_MS, -1);  break;
@@ -233,7 +260,7 @@ static void HandleSerialKeys(void) {
 
 void setup() {
   Log_Setup();
-  Log_Printf("起動", "Nova スプリント2（ID25 うろうろ・ID15 障害物で困る）");
+  Log_Printf("起動", "Nova スプリント3（ID25 うろうろ・ID15 障害物で困る・ID26 詰まり脱出）");
 
   uint8_t resetCode = Reset_ReasonCode();
   Log_Printf("起動", "リセット理由：%s%s", Reset_ReasonName(resetCode),
@@ -266,9 +293,11 @@ void setup() {
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
   Arbiter_Register(&troubleBehavior);
+  Arbiter_Register(&stuckBehavior);
   Arbiter_Register(&noticeBehavior);
   Arbiter_Register(&wanderBehavior);
   Arbiter_Register(&pauseCueBehavior);
+  Arbiter_Register(&stuckEyesBehavior);
   Arbiter_Register(&noticeEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 

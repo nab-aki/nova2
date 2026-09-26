@@ -49,7 +49,7 @@ void DebugTurnBehavior::begin(unsigned long nowMs) {
                "（%.0fcm 未満の非常停止と、持ち上げでは止まります）",
                Obstacle_LastCm(), OBSTACLE_EMERGENCY_CM);
   }
-  Log_Printf("デバッグ", "%s を %lums（1ステップ）。回った角度を測ってください",
+  Log_Printf("デバッグ", "%s を %lums。回った角度を測ってください",
              Motion_TurnName(kind_), durationMs_);
   Motion_StartTurn(kind_, nowMs);
 }

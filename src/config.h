@@ -148,6 +148,7 @@
 //   （PWM 688〜726）の間だけで、speed<0.01 は PWM0。MOTION_WOBBLE_MIN_SPEED 0.15 も下回るので
 //   速度の揺らぎは入らない。
 #define CRUISE_SPEED                0.0385f // 巡航の正規化速度（PWM 726 相当）
+#define CRUISE_CM_PER_S             41.1f   // 巡航の速さ（実測の接近速度。ID26 で「期待した変化」の計算に使う）
 
 // ------------------------ 安全層：持ち上げ ------------------------ //
 // 実測：床では 000、持ち上げると 111（docs/measurements.md）。
@@ -165,6 +166,7 @@
 #define PRIORITY_NOTICE             30      // 車体：ID9 気づく（20 から変更）
 #define PRIORITY_WANDER_RECOVER     35      // 車体：ID25 の後退+その場回転（横がとても近いときの張りつき対策）。
                                             // ID15 の立て直しと同じく、気づく（30）に割り込まれず最後までやり切る
+#define PRIORITY_STUCK              38      // 車体：ID26 詰まり脱出（ID15 より下、ID25 の後退+その場回転より上）
 #define PRIORITY_TROUBLE            40      // 車体：ID15 障害物で困る
 #define PRIORITY_DEBUG_TURN         50      // 車体：回転角を測るデバッグキー（3〜6）
 
@@ -187,6 +189,7 @@
 #define DEBUG_TUNE_PWM_STEP         50
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
+#define PRIORITY_STUCK_EYES         35      // 目：ID26 の「？」（気づいてから後退を始めるまで）
 #define PRIORITY_PAUSE_CUE          40      // 目：一時停止・再開の合図（リモコンの ▶ や p キー）
 
 // ------------------------ 一時停止・再開の合図（目）------------------------ //
@@ -246,6 +249,30 @@
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
 #define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数。360° ÷ 30°/ステップ（実測）＝ 12
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間
+
+// ------------------------ ID26 詰まり脱出 ------------------------ //
+// docs/specs/26_stuck.md。信号A：巡航中に正面が縮まない／信号B：見回し（正面・左右±50°）が変わらない。
+// 「期待した変化」＝経過時間（信号B は巡航時間）× CRUISE_CM_PER_S。その STUCK_UNCHANGED_RATIO 倍未満なら「不変」。
+#define STUCK_UNCHANGED_RATIO       0.5f    // 信号A・信号B（正面）：変化が期待のこの割合未満なら「縮まない／不変」
+#define STUCK_PUSH_WINDOW_MS        1000    // 信号A：巡航中、この時間の正面の縮みを見る（1000ms なら約20.6cm 未満で詰まり）
+#define STUCK_PUSH_MIN_SAMPLES      3       // 信号A：窓の中の有効な測距がこれ未満なら判定しない
+#define STUCK_SCAN_SAME_CM          4.0f    // 信号B（左右）：差がこれ未満なら「同じ」（静止時のばらつきは σ0.2cm 以下）
+#define STUCK_SCAN_NEAR_CM          60.0f   // 信号B：横だけを比べたとき、少なくとも1つがこれ未満なら数える。壁の側の手がかりにも使う
+#define STUCK_SAME_SCANS_STRONG     1       // 信号B：正面不変・横が接触（WANDER_SIDE_VERY_NEAR_CM 未満）の確定回数
+#define STUCK_SAME_SCANS_SIDE       2       // 信号B：横だけ（25〜60cm）の確定回数（最悪 約24秒の見積もり）
+#define STUCK_SUSPECT_RUN_MS        1000    // 信号B：「同じ」が出て確定しなかったとき、次の巡航の時間（最短にして周期を縮める）
+#define STUCK_THINK_MS              1000    // 止まってから「？」の目で考えている時間
+#define STUCK_BACK_MS               800     // 後退の時間（仮の値。速さ・加減速は ID15 と共通）
+#define STUCK_TURN_MIN_DEG          60      // 回る角度（ランダム）
+#define STUCK_TURN_MAX_DEG          120
+#define STUCK_TURN_REPEAT_MIN_DEG   150     // くり返し詰まったときの回る角度（ランダム）
+#define STUCK_TURN_REPEAT_MAX_DEG   210
+#define STUCK_REPEAT_MS             30000   // 脱出後、この時間以内にまた詰まったら「くり返し」
+// 連続したその場回転（キック1回→保持）の、1°あたりの時間。
+// 【仮の値】1ステップ 700ms≒30°（止めては回す実測）からの比例。キー 7・8 で 90° を回して実測し、
+// docs/measurements.md に記録してから直す。キック・保持のPWMは core/turn_tuning.* の値を使う。
+#define ROTATE_CONT_MS_PER_DEG      23.3f
+#define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
 // 「1回の試験」＝再開してから一時停止するまで（起動時に一時停止でなければ起動から）。

@@ -24,6 +24,14 @@ struct TestRecord {
   uint16_t recoverPerformed;    // ID25：後退+その場回転（張りつき対策）を実施した回数
   uint16_t recoverInterrupted;  // ID25：後退+その場回転が途中で交代された回数
   uint16_t liftCount;         // 持ち上げを検知した回数
+  uint16_t stuckDetectA;        // ID26：信号A（巡航中に正面が縮まない）で気づいた回数
+  uint16_t stuckDetectFront;    // ID26：信号B・正面不変で気づいた回数
+  uint16_t stuckDetectContact;  // ID26：信号B・横が接触で気づいた回数
+  uint16_t stuckDetectSide;     // ID26：信号B・横だけで気づいた回数
+  uint16_t stuckEscapedA;       // ID26：信号A の回で、回転まで最後までやり切った回数
+  uint16_t stuckEscapedB;       // ID26：信号B の回で、同上
+  uint16_t stuckRepeat;         // ID26：くり返し詰まった回数
+  uint32_t stuckUnchangedMaxMs; // ID26：見回しが「同じ」が続いた最長の時間
 };
 
 // NVSに保存する全体。直近3回分のリングバッファ
@@ -34,7 +42,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E31u  // "TSN1"
+#define TEST_STATS_MAGIC  0x54534E32u  // "TSN2"（ID26 の項目を足した）
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -71,12 +79,15 @@ static void SaveCurrent(unsigned long nowMs, const char *reason) {
   storage.ring[storage.headIndex] = current;
   Storage_Save(STORAGE_KEY_TEST_STATS, &storage, sizeof(storage));
   Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回(回転中%d回) 困る開始%d/空き%d/あきらめ%d "
-             "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d）",
+             "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d 詰まり検知A%d/B%d 脱出A%d/B%d）",
              reason, Reset_ReasonName(current.startResetCode), current.elapsedMs, current.stopCount,
              current.stopWhileTurning,
              current.troubleStarts, current.troubleCleared, current.troubleGiveups,
              current.pivotPerformed, current.pivotInterrupted,
-             current.recoverPerformed, current.recoverInterrupted, current.liftCount);
+             current.recoverPerformed, current.recoverInterrupted, current.liftCount,
+             current.stuckDetectA,
+             current.stuckDetectFront + current.stuckDetectContact + current.stuckDetectSide,
+             current.stuckEscapedA, current.stuckEscapedB);
 }
 
 void TestStats_Setup(bool startPaused, unsigned long nowMs) {
@@ -214,6 +225,45 @@ void TestStats_RecordLift(void) {
   current.liftCount++;
 }
 
+void TestStats_RecordStuckDetected(StuckReason reason) {
+  if (!recording) {
+    return;
+  }
+  switch (reason) {
+    case STUCK_REASON_PUSH:    current.stuckDetectA++;       break;
+    case STUCK_REASON_FRONT:   current.stuckDetectFront++;   break;
+    case STUCK_REASON_CONTACT: current.stuckDetectContact++; break;
+    default:                   current.stuckDetectSide++;    break;
+  }
+}
+
+void TestStats_RecordStuckEscaped(bool signalA) {
+  if (!recording) {
+    return;
+  }
+  if (signalA) {
+    current.stuckEscapedA++;
+  } else {
+    current.stuckEscapedB++;
+  }
+}
+
+void TestStats_RecordStuckRepeat(void) {
+  if (!recording) {
+    return;
+  }
+  current.stuckRepeat++;
+}
+
+void TestStats_RecordStuckUnchangedMs(unsigned long ms) {
+  if (!recording) {
+    return;
+  }
+  if (ms > current.stuckUnchangedMaxMs) {
+    current.stuckUnchangedMaxMs = ms;
+  }
+}
+
 void TestStats_RequestSave(unsigned long nowMs) {
   if (!recording && !pendingSave) {
     Log_Printf("試験", "保存する試験がありません（まだ再開していません）");
@@ -248,6 +298,12 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              r.troubleStarts, r.troubleCleared, r.troubleGiveups,
              r.pivotPerformed, r.pivotInterrupted,
              r.recoverPerformed, r.recoverInterrupted, r.liftCount);
+  Log_Printf("試験", "[%d]  詰まり：検知 A %d／B %d（正面不変 %d・横が接触 %d・横だけ %d）　脱出 A %d／B %d　"
+             "くり返し %d　最長不変 %.1f秒",
+             slot, r.stuckDetectA,
+             r.stuckDetectFront + r.stuckDetectContact + r.stuckDetectSide,
+             r.stuckDetectFront, r.stuckDetectContact, r.stuckDetectSide,
+             r.stuckEscapedA, r.stuckEscapedB, r.stuckRepeat, r.stuckUnchangedMaxMs / 1000.0f);
 }
 
 void TestStats_Print(unsigned long nowMs) {

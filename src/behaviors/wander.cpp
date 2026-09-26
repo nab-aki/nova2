@@ -5,6 +5,7 @@
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
+#include "../core/stuck_watch.h"
 #include "../core/test_stats.h"
 #include "../core/trace.h"
 #include "../core/turn_tuning.h"
@@ -53,6 +54,7 @@ int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
 void WanderBehavior::Restart(unsigned long nowMs) {
   pendingAvoidTurn_ = false;
   pendingRecover_ = false;
+  StuckWatch_Reset(true);   // 詰まりの数えもやり直す（持ち上げのあと・交代から戻ったとき）
   Motion_Stop(nowMs);
   ChangeState(STATE_SETTLE, nowMs);
 }
@@ -77,6 +79,9 @@ void WanderBehavior::onStop(unsigned long nowMs) {
                nowMs - stateStartMs_, Pause_IsPaused() ? "一時停止のため" : "ほかの振る舞いに");
     TestStats_RecordRecoverInterrupted();
   }
+  // 交代したら詰まりの数えをやり直す（ID9・ID15・一時停止・ID26 のどれもここを通る）。
+  // ID26 に交代するときは、気づいた内容を ID26 が受け取るので残す。一時停止なら捨てる
+  StuckWatch_Reset(Pause_IsPaused());
   Motion_Stop(nowMs);            // 回転中ならここで取り消される
   Neck_Release(NECK_OWNER_RANGE);
 }
@@ -148,6 +153,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       frontCm_ = scan_.cm();
+      frontValid_ = scan_.validCount();
       scan_.begin(SCAN_LEFT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_LEFT, nowMs);
       return;
@@ -157,6 +163,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       leftCm_ = scan_.cm();
+      leftValid_ = scan_.validCount();
       scan_.begin(SCAN_RIGHT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_RIGHT, nowMs);
       return;
@@ -166,7 +173,27 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       rightCm_ = scan_.cm();
-      Decide(nowMs);
+      rightValid_ = scan_.validCount();
+      {
+        // 見回しの結果を詰まりの見張りに渡す（ID26 の信号B）
+        StuckScanResult result;
+        result.cm[STUCK_DIR_FRONT] = frontCm_;
+        result.cm[STUCK_DIR_LEFT] = leftCm_;
+        result.cm[STUCK_DIR_RIGHT] = rightCm_;
+        result.valid[STUCK_DIR_FRONT] = frontValid_;
+        result.valid[STUCK_DIR_LEFT] = leftValid_;
+        result.valid[STUCK_DIR_RIGHT] = rightValid_;
+        StuckWatch_OnScan(result, nowMs);
+      }
+      if (StuckWatch_IsDetected()) {
+        // 次のループで ID26（優先度38）に交代する。向き変えは決めない
+        pendingAvoidTurn_ = false;
+        pendingRecover_ = false;
+        Log_Printf("うろうろ", "見回し 正面 %.1fcm／左 %.1fcm／右 %.1fcm。詰まり脱出に任せます",
+                   frontCm_, leftCm_, rightCm_);
+      } else {
+        Decide(nowMs);
+      }
       ChangeState(STATE_FACE_FRONT, nowMs);
       return;
 
@@ -260,21 +287,30 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
         return;
       }
-      runMs_ = (unsigned long)random(WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS + 1);
-      Log_Printf("うろうろ", "前進 %lums（%d〜%dms から）",
-                 runMs_, WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS);
+      if (StuckWatch_WantShortRun()) {
+        // 詰まりの疑いがあるときは、確かめる周期を縮めるため最短にする（ID26。最悪時間を30秒以内に）
+        runMs_ = STUCK_SUSPECT_RUN_MS;
+        Log_Printf("うろうろ", "前進 %lums（詰まりの疑いがあるので短く）", runMs_);
+      } else {
+        runMs_ = (unsigned long)random(WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS + 1);
+        Log_Printf("うろうろ", "前進 %lums（%d〜%dms から）",
+                   runMs_, WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS);
+      }
       Motion_SetSpeed(CRUISE_SPEED, MOTION_ACCEL_MS, nowMs);
       ChangeState(STATE_ACCEL, nowMs);
       return;
 
     case STATE_ACCEL:
       if (Motion_IsAtTarget()) {
+        StuckWatch_OnCruiseStart();   // 巡航速度に達してから信号A を見る
         ChangeState(STATE_CRUISE, nowMs);
       }
       return;
 
     case STATE_CRUISE:
+      StuckWatch_OnCruiseSample(sensors, nowMs);   // ID26 の信号A（気づいたら次のループで交代する）
       if (nowMs - stateStartMs_ >= runMs_) {
+        StuckWatch_OnWalked(nowMs - stateStartMs_);
         Motion_Stop(nowMs);
         ChangeState(STATE_DECEL, nowMs);
       }
