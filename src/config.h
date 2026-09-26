@@ -269,9 +269,10 @@
 #define STUCK_TURN_REPEAT_MAX_DEG   210
 #define STUCK_REPEAT_MS             30000   // 脱出後、この時間以内にまた詰まったら「くり返し」
 // 連続したその場回転（キック1回→保持）の、1°あたりの時間。
-// 【仮の値】1ステップ 700ms≒30°（止めては回す実測）からの比例。キー 7・8 で 90° を回して実測し、
-// docs/measurements.md に記録してから直す。キック・保持のPWMは core/turn_tuning.* の値を使う。
-#define ROTATE_CONT_MS_PER_DEG      23.3f
+// キー 7・8 で 2097ms（90°のつもりの時間）を回したところ、左右平均で約65°しか回らなかった
+// （連続回転は動き出しのキックが1回だけで、「止めては回す」からの比例より立ち上がりロスが少ないため。
+// docs/measurements.md 2026-09-26）。2097÷65≒32.3ms/° に直した。キック・保持のPWMは core/turn_tuning.* の値を使う。
+#define ROTATE_CONT_MS_PER_DEG      32.3f
 #define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
