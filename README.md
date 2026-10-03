@@ -1,7 +1,7 @@
 # Nova
 
 Nova is a homemade "pet robot" project, aiming for something like a smaller,
-less-capable version of [LOVOT](https://lovot.lv/en/) — a companion robot with
+less-capable version of [LOVOT](https://lovot.life/en) — a companion robot with
 a sense of presence and reactions to the person nearby, rather than a simple
 line-tracing or obstacle-avoiding car.
 
