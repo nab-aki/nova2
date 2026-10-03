@@ -27,7 +27,33 @@ addresses follow the kit's official definitions unless noted otherwise.
 
 #### Power: 6x NiMH batteries + XT30 connector
 
-_(details to be added)_
+The kit calls for two 18650 lithium-ion cells. Nova runs on six NiMH
+rechargeable AA batteries instead.
+
+- **Batteries:** 6 × NiMH rechargeable AA in a 6-cell battery box. That gives
+  about 7.2 V nominal (1.2 V × 6), close to the about 7.4 V nominal of two
+  18650 cells.
+- **Connector:** an XT30 pair with AWG16 leads, so the battery box can be
+  unplugged.
+  - Female side: soldered to the battery box leads.
+  - Male side: soldered to the battery holder's solder terminals on the 4WD
+    car board.
+- **Power switch:** the power switch on the board still works as before.
+
+Notes:
+
+- Use NiMH rechargeable batteries only. Six alkaline AA batteries give a
+  higher voltage.
+- Check the polarity with a multimeter before plugging the battery in for
+  the first time.
+- AWG16 wire is thick. A 15 W soldering iron struggled with it; 30 W or more
+  makes the job much easier.
+- The leads that came with my battery box are thin (probably AWG24 or
+  thinner). I haven't replaced them yet, but I recommend rewiring them with
+  AWG18 or thicker.
+
+Tested for wandering around on wooden floors at home. Long continuous runs
+are not tested.
 
 #### Custom cable: LED matrix + ultrasonic sensor sharing the neck
 
@@ -35,7 +61,23 @@ The front-facing ultrasonic sensor has been removed; the only distance sensor
 is on the pan/tilt "neck", alongside the LED matrix eyes. Running both on the
 neck at once needed a custom cable.
 
-_(details to be added)_
+The kit's manual doesn't cover using the ultrasonic sensor and the LED
+matrix at the same time, and the stock cable only lets you connect one or
+the other.
+
+- **LED matrix:** connected with the kit's stock cable, unchanged.
+- **Ultrasonic sensor:** connected with a homemade 4-pin cable.
+  - Length: about 150 mm
+  - Connectors: AMP MODU-compatible 4-pin connectors on both ends
+  - Wiring: straight. The four lines (VCC, Trig, Echo, GND) are in the same
+    order on both ends.
+  - Board side: plugs into the header marked for the ultrasonic sensor on
+    the 4WD car board.
+
+Before powering on, check the pin labels on both the sensor and the board.
+Swapping VCC and GND can damage the sensor.
+
+This works in my setup. It is not an officially documented configuration.
 
 ## Status
 
