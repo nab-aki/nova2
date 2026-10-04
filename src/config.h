@@ -35,8 +35,12 @@
 // 【2026-09-25】ID25 の向き変えはその場回転に置き換えたので、片側旋回は今は使っていない
 // （広い場所での方向転換として将来使い直す。docs/specs/25_wander.md「片側旋回（今は使わない）」）。
 // その場回転は 2026-09-25 に測り直した値（下記）。
-#define MOTOR_ROTATE_KICK_PWM       1600    // その場回転の動き出し
-#define MOTOR_ROTATE_HOLD_PWM       1000    // その場回転の回り続ける値
+// 【2026-10-04 変更】保持 1000→2000、キック 1600→2000（キックの時間は 100→0ms で、実質キックなし）。
+// 保持 PWM1000 では満充電でも床で全く回らなくなったため、正常に回る Freenove 公式サンプル
+// 05.3_Multi_Functional_Car の旋回（Motor_Move(-2000,-2000,2000,2000)、一定値）に合わせた。
+// 変更前の値：KICK_PWM 1600 / HOLD_PWM 1000 / KICK_MS 100（docs/measurements.md 2026-10-04）。
+#define MOTOR_ROTATE_KICK_PWM       2000    // その場回転の動き出し（1600から変更。KICK_MS が 0 なので今は使われない）
+#define MOTOR_ROTATE_HOLD_PWM       2000    // その場回転の回り続ける値（1000から変更。公式サンプルと同じ）
 #define MOTOR_PIVOT_KICK_PWM        1400    // 片側旋回の動き出し（一旦の決定値。保持のほうが大きい点は見直し候補。今は未使用）
 #define MOTOR_PIVOT_HOLD_PWM        1450    // 片側旋回の回り続ける値（同上）
 // 【2026-09-22 変更】1000→300ms。満充電での5分間試験で、後退+その場回転（張りつき対策）のあと
@@ -47,7 +51,8 @@
 // 床で調整キーを使って測り直し、TROUBLE_TURN_STEP_MS 1300→700ms・MOTOR_ROTATE_KICK_MS 300→100ms で
 // 左右とも12回・360°（1ステップ約30°）に戻した（docs/measurements.md）。TROUBLE_MAX_STEPS（12）は変えない。
 // 片側旋回のキック時間 MOTOR_PIVOT_KICK_MS は変更していない（今は ID25 で使っていない）。
-#define MOTOR_ROTATE_KICK_MS        100     // その場回転のキックを出す時間（300から変更。AWG16交換後に測り直した）
+// 【2026-10-04 変更】100→0ms（キックなし。保持 PWM2000 の一定値で回る。公式サンプルに合わせた）。
+#define MOTOR_ROTATE_KICK_MS        0       // その場回転のキックを出す時間（100から変更。100は AWG16交換後に測り直した値）
 #define MOTOR_PIVOT_KICK_MS         300     // 片側旋回のキックを出す時間（変更なし。今は ID25 で使っていない）
 
 // ------------------------ 首サーボ ------------------------ //
@@ -244,8 +249,11 @@
 #define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
                                             // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
-#define TROUBLE_TURN_STEP_MS        700     // 1回に回る時間（うちキック MOTOR_ROTATE_KICK_MS 100ms・保持600ms。約30°。
-                                            // 2026-09-25 測り直した値。ID25「横が近いときの向き変え」も同じ値を使う）
+// 【2026-10-04 暫定値・測り直し前】700→200ms。公式サンプル 05.3_Multi_Functional_Car の旋回（200ms）に合わせた。
+// 回転速度が PWM2000 で大きく変わったため、1ステップの角度は未測定。キー 3・4 で測り直して決め直すこと。
+// 変更前の 700ms は「キック100ms＋保持600ms、PWM1600/1000 で約30°」（2026-09-25 測定）の値。
+#define TROUBLE_TURN_STEP_MS        200     // 1回に回る時間（暫定値。うちキックなし・保持200ms。
+                                            // ID25「横が近いときの向き変え」も同じ値を使う）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
 #define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数。360° ÷ 30°/ステップ（実測）＝ 12
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間
@@ -272,6 +280,8 @@
 // キー 7・8 で 2097ms（90°のつもりの時間）を回したところ、左右平均で約65°しか回らなかった
 // （連続回転は動き出しのキックが1回だけで、「止めては回す」からの比例より立ち上がりロスが少ないため。
 // docs/measurements.md 2026-09-26）。2097÷65≒32.3ms/° に直した。キック・保持のPWMは core/turn_tuning.* の値を使う。
+// 【注意・2026-10-04】この係数は PWM1600→1000 の回転で測った値で、PWM2000 では未校正。
+// 測り直すまで ID26 とキー 7・8 は回りすぎる（PWM が約2倍なので、狙いの角度より大きく回る）。
 #define ROTATE_CONT_MS_PER_DEG      32.3f
 #define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 
