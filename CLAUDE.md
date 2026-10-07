@@ -35,6 +35,8 @@ Freenove 4WD Car Kit for ESP32（FNK0053）をベースに、猫のように気�
 - 1回の依頼では、カタログの1ID分だけを実装する
 - 依存するIDの最小版と共通部品は、同じ依頼で作ってよい
 - セッションの最初に docs/handoff.md を読む（現在地・進行中・次にやること）
+- セッションの開始は /start（CLAUDE.md と docs/handoff.md を読んで要約し、指示を待つ）、
+  終了は /handoff（docs/handoff.md を更新して #0 でコミット）。定義は .claude/commands/
 - 着手前に docs/specs/ の該当ミニ仕様と docs/catalog.md を読む
 - 完了したら docs/catalog.md の状態を更新する
 - コミットメッセージの先頭にIDを付ける（例：「#10 見上げる：初版」）
@@ -49,3 +51,4 @@ Freenove 4WD Car Kit for ESP32（FNK0053）をベースに、猫のように気�
 - docs/decisions.md    判断記録
 - docs/measurements.md 実測値
 - docs/handoff.md      引き継ぎ文書（現在地・次にやること。セッションの最初に読む）
+- docs/notes.md        常設の注意書き（手順・コツ・既知の限界。必要なときに読む）
