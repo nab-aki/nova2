@@ -109,7 +109,7 @@ TestStatsStorage（NVSに保存する全体）
 **きっかけ**：5分間試験の分析で、`Motion_StartTurn()` が速度スムーザーを0にリセットするため、
 回転中（その場回転・片側旋回・後退+その場回転）にID9が気づくと `noticedWhileMoving_` が false になり、
 「止まっているときに気づいた」扱いで通算・集計のどちらにも数えられていない疑いが見つかった
-（`docs/handoff.md`「4. 5分間試験の結果」2026-09-21〜22）。
+（2026-09-21〜22 の5分間試験。結果は `docs/specs/25_wander.md`「実機評価」と `docs/decisions.md`）。
 
 - `NoticeBehavior::EnterNoticed()` で、`Motion_SetSpeed(0, ...)` が回転を取り消す前に
   `Motion_IsTurning()` を読み、`noticedWhileTurning_` として別に持つ。
