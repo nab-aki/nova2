@@ -301,6 +301,44 @@
 #define ROTATE_CONT_MS_PER_DEG      13.0f
 #define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 
+// ------------------------ ジャイロ（スプリント3.5。第1段階＝測るだけ）------------------------ //
+// docs/specs/common_gyro_checklist.md。回転の制御にはまだ使わない（時間ベースのまま）。
+// 測定範囲 ±500dps・ODR 120Hz は hal/hal_gyro.cpp のレジスタ値で決まる（ここの値だけ変えても設定は変わらない）。
+#define GYRO_DPS_PER_LSB            0.0175f // ±500dps の感度 17.50mdps/LSB（データシート DS13510 Rev 4）
+// 回転の正の向きは「上から見て反時計回り（左回り）」。部品面が上向きなので Z 軸がそのまま合う見込み（+1）。
+// 【未確認】実機でキー 3（その場回転 左）を押し、角度が正で出るかを確かめて決める。負なら -1 にする
+#define GYRO_YAW_SIGN               (+1)
+#define GYRO_YAW_AXIS               2       // 0=X 1=Y 2=Z（車体の上下の軸）
+#define GYRO_READ_INTERVAL_MS       25      // FIFO を読みに行く間隔（120Hz なら1回に約3件）
+#define GYRO_MAX_WORDS_PER_READ     8       // 1回に読む件数の上限（1件 約1ms。たまっていても loop を長く止めないため）。
+                                            // 残りは次の loop で続けて読む
+#define GYRO_RESET_TIMEOUT_MS       200     // ソフトウェアリセットが終わるのを待つ上限
+#define GYRO_SETTLE_MS              100     // ODR を設定してから FIFO を始めるまで捨てる時間（立ち上がり 30ms＋余裕）
+#define GYRO_FAIL_LIMIT             10      // 読み取りがこの回数続けて失敗したら、読むのをやめる（z キーで再開を試せる）
+#define GYRO_SATURATION_RAW         32700   // 生値の絶対値がこれ以上なら「頭打ち」と数える（±500dps の端）
+#define GYRO_JUMP_DPS               100.0f  // 【仮】1件前（約8ms前）との差がこれ以上なら「飛び」と数える（実機のノイズを見て決める）
+// ゼロ点補正：車体が止まっている間に GYRO_CAL_SAMPLES 件の平均を取る。その間に動いていたらやり直す
+#define GYRO_CAL_DISCARD_MS         100     // 補正を始める前に捨てる時間
+#define GYRO_CAL_SAMPLES            240     // 平均を取る件数（120Hz で約2秒）
+#define GYRO_CAL_MAX_SPREAD_DPS     1.0f    // 【仮】補正中の各軸の振れ幅（最大−最小）がこれを超えたら「動いた」とみなす
+#define GYRO_CAL_MAX_OFFSET_DPS     5.0f    // 【仮】平均の絶対値がこれを超えたら「ゆっくり回っていた」とみなす（仕様のゼロ点は ±1dps）
+// 回転ごとの記録（時間ベースの回転で、実際に何度回ったか）
+#define GYRO_TURN_ONSET_DPS         5.0f    // 【仮】角速度がこれを超えたら「回り始めた」
+#define GYRO_TURN_REST_DPS          2.0f    // 【仮】止めたあと、角速度がこれ未満の状態が
+#define GYRO_TURN_REST_MS           150     //        この時間続いたら「止まった」として記録を締める
+#define GYRO_TURN_SETTLE_MAX_MS     1500    // 止めてから、止まるのを待つ上限
+#define GYRO_TURN_LOG_COUNT         8       // t キーで見られる回転の記録の件数（新しい順）
+// 静止測定（m キー）・モーターの振動の測定（n キー）
+#define GYRO_MEASURE_STATIC_MS      60000   // 静止測定の長さ
+#define GYRO_MEASURE_BASE_SAMPLES   240     // 区間の最初のこの件数で、飛びを数える基準（平均とばらつき）を決める
+#define GYRO_SPIKE_SIGMA            8.0f    // 【仮】基準の平均から、標準偏差のこの倍数を超えたら「飛び」
+#define GYRO_SPIKE_MIN_DPS          0.5f    // 【仮】ただし、少なくともこの幅は「飛び」としない
+#define GYRO_SPIN_SEGMENT_MS        10000   // n キー：停止・前進・その場回転の、それぞれの長さ
+#define GYRO_SPIN_SKIP_MS           1000    // n キー：モーターを回す区間の最初に、集計から外す時間（回り始め）
+#define GYRO_SPIN_RAMP_MS           300     // n キー：前進の加速・減速にかける時間
+#define GYRO_SPIN_GAP_MS            500     // n キー：前進を止めてから、その場回転を始めるまでの「ため」
+#define PRIORITY_DEBUG_GYRO_SPIN    50      // 車体：n キーの測定（デバッグ回転と同じ。同時には受け付けない）
+
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
 // 「1回の試験」＝再開してから一時停止するまで（起動時に一時停止でなければ起動から）。
 // 直近3回分だけ NVS（フラッシュ）に保存する。走行中は書かない。

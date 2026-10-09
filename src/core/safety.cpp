@@ -9,6 +9,7 @@
 
 static bool stopping = false;
 static bool debugTurnActive = false;   // デバッグ回転の1ステップの間は、障害物「あり」では止めない
+static bool spinTestActive = false;    // n キーの測定（車輪を浮かせて回す）の間は、持ち上げと障害物「あり」では止めない
 static bool lifted = false;
 static int liftClearCount = 0;   // 床に戻ってから、111 以外を読んだ連続回数
 
@@ -21,6 +22,7 @@ static uint32_t trackLostTotal = 0;  // 読めない状態になった回数（�
 void Safety_Setup(void) {
   stopping = false;
   debugTurnActive = false;
+  spinTestActive = false;
   lifted = false;
   liftClearCount = 0;
   trackLost = false;
@@ -111,8 +113,9 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
   }
 
   // 2. 持ち上げられていたら（または、ライントラッキングが読めず持ち上げを判定できなければ）、
-  //    向きに関わらずすべての動きを止める
-  if (lifted || trackLost) {
+  //    向きに関わらずすべての動きを止める。
+  //    n キーの測定の間だけは、持ち上げでは止めない（浮かせて回す測定のため）。読めないときは、測定中でも止める
+  if ((lifted && !spinTestActive) || trackLost) {
     if (BodyIsMoving()) {
       Motion_EmergencyStop();   // 目標速度も回転も0に戻る
     }
@@ -121,9 +124,10 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
   }
 
   // 3. 障害物があれば、近づく向きの動き（前進・片側旋回）だけを即停止する。
-  //    デバッグ回転の1ステップの間は、「あり」の判定では止めない（非常停止距離未満では止める）
+  //    デバッグ回転の1ステップの間と n キーの測定の間は、「あり」の判定では止めない（非常停止距離未満では止める）
   bool danger = Obstacle_IsBlocked() || Obstacle_IsEmergency();
-  bool mustStop = (debugTurnActive ? false : Obstacle_IsBlocked()) || Obstacle_IsEmergency();
+  bool ignoreBlocked = debugTurnActive || spinTestActive;
+  bool mustStop = (ignoreBlocked ? false : Obstacle_IsBlocked()) || Obstacle_IsEmergency();
   if (mustStop && MovingTowardObstacle()) {
     const char *reason = Obstacle_IsEmergency() ? "非常停止（近すぎる）" : "障害物あり";
     Log_Printf("安全", "%s のため即停止（距離 %.1fcm）", reason, Obstacle_LastCm());
@@ -134,6 +138,14 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
 
 void Safety_SetDebugTurnActive(bool active) {
   debugTurnActive = active;
+}
+
+void Safety_SetSpinTestActive(bool active) {
+  if (active != spinTestActive) {
+    Log_Printf("安全", "%s", active ? "測定（n）の間だけ、持ち上げによる停止を外します（非常停止は外しません）"
+                                    : "持ち上げによる停止を元に戻しました");
+  }
+  spinTestActive = active;
 }
 
 bool Safety_IsStopping(void) {

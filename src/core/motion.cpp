@@ -3,6 +3,7 @@
 #include "../config.h"
 #include "../hal/hal_log.h"
 #include "../hal/hal_motor.h"
+#include "gyro.h"
 #include "obstacle.h"
 #include "smoother.h"
 #include "turn_tuning.h"
@@ -79,6 +80,7 @@ static void CancelTurn(unsigned long nowMs, const char *reason) {
   }
   turning = false;
   Motor_Stop();
+  Gyro_OnTurnStop(nowMs);   // 実際に回った角度の記録（測るだけ。動きは変えない）
   Obstacle_Reset();   // 回っている間の測距は別の方向を見ている
   if (reason != NULL) {
     Log_Printf("動き", "%s %s（合計 %lums）", Motion_TurnName(turnKind), reason, nowMs - turnStartMs);
@@ -109,9 +111,13 @@ void Motion_Stop(unsigned long nowMs) {
 }
 
 void Motion_EmergencyStop(void) {
+  bool wasTurning = turning;
   turning = false;          // 回転中でも確実に止める（記録は下の1行にまとめる）
   speedSmoother.reset(0.0f);
   Motor_Stop();
+  if (wasTurning) {
+    Gyro_OnTurnStop(millis());   // 実際に回った角度の記録（測るだけ）
+  }
   Log_Printf("動き", "非常停止");
 }
 
@@ -122,6 +128,7 @@ void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
   turnKicking = TurnKickMs(kind) > 0;   // キックの時間が0なら、保持のPWMから始める
   turnStartMs = nowMs;
   Obstacle_Reset();            // 回り始める前の測距は、別の方向を向いていたときの値
+  Gyro_OnTurnStart(Motion_TurnName(kind), nowMs);   // 実際に回った角度の記録（測るだけ。動きは変えない）
   if (turnKicking) {
     ApplyTurn(kind, TurnKickPwm(kind));
     Log_Printf("動き", "%s キック PWM%d（%lums）",

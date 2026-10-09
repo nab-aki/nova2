@@ -4,7 +4,7 @@
 #ifndef NOVA_HAL_PINS_H
 #define NOVA_HAL_PINS_H
 
-// I2Cバス（PCA9685・LEDマトリクス・PCF8574が共有）
+// I2Cバス（PCA9685・LEDマトリクス・PCF8574・ジャイロが共有）
 #define PIN_I2C_SDA          13
 #define PIN_I2C_SCL          14
 
@@ -33,6 +33,10 @@
 
 // ライントラッキング（PCF8574）
 #define I2C_ADDR_TRACK       0x20
+
+// ジャイロ（LSM6DSV16X。秋月電子 AE-LSM6DSV16X。キットにはない追加の部品）
+// モジュールの J3 を短絡して SA0＝GND にしたので 0x6A（J2 側なら 0x6B。docs/specs/common_gyro_checklist.md）
+#define I2C_ADDR_GYRO        0x6A
 
 // 超音波（PCA9685を経由せずGPIOに直結）
 #define PIN_SONIC_TRIG       12

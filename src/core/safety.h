@@ -26,6 +26,13 @@ bool Safety_IsStopping(void);
 // 本番の動き（ID25・ID15）には影響しない。デバッグ回転の開始で true、終了・中断で false にすること。
 void Safety_SetDebugTurnActive(bool active);
 
+// n キーの測定（車輪を浮かせてモーターを回し、ジャイロに乗る振動を測る。behaviors/debug_gyro_spin.*）の間だけ、
+// 持ち上げによる停止と、障害物「あり」による停止を外す。次は外さない：
+//   ・非常停止距離（OBSTACLE_EMERGENCY_CM）未満での停止
+//   ・ライントラッキングが読めないときの停止
+// 測定の開始で true、終了・中断で必ず false にすること。本番の動きには影響しない。
+void Safety_SetSpinTestActive(bool active);
+
 // 持ち上げられているか。振る舞いはこの間、状態を進めない。
 // 床に戻ったら、続きからではなく最初からやり直す（docs/specs/25_wander.md）。
 // ライントラッキングが読めない状態（Safety_IsTrackLost）のときも true を返す（止め方・戻り方を同じにするため）

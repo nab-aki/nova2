@@ -17,6 +17,7 @@
 #include <Arduino.h>
 
 #include "behaviors/blink.h"
+#include "behaviors/debug_gyro_spin.h"
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
 #include "behaviors/pause_cue.h"
@@ -28,6 +29,8 @@
 #include "core/arbiter.h"
 #include "core/debug_pause.h"
 #include "core/eyes.h"
+#include "core/gyro.h"
+#include "core/gyro_measure.h"
 #include "core/motion.h"
 #include "core/neck.h"
 #include "core/obstacle.h"
@@ -46,6 +49,7 @@ static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
 static WanderBehavior wanderBehavior;
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
+static DebugGyroSpinBehavior debugGyroSpinBehavior;
 static PauseCueBehavior pauseCueBehavior;
 static StuckBehavior stuckBehavior;
 static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
@@ -83,9 +87,18 @@ static void PrintStatus(unsigned long nowMs) {
              Motion_GetSpeed(), Motor_SpeedToPwm(Motion_GetSpeed()));
   }
 
+  // ジャイロ（読めているときは回る速さと積算した向き、そうでなければ状態）
+  char gyro[48];
+  if (Gyro_IsReading()) {
+    snprintf(gyro, sizeof(gyro), "%+.1fdps/%+.1f°%s", Gyro_YawRateDps(), Gyro_YawDeg(),
+             Gyro_IsCalibrated() ? "" : "(未補正)");
+  } else {
+    snprintf(gyro, sizeof(gyro), "%s", Gyro_StateName());
+  }
+
   Log_Printf("状態",
              "距離:%s 障害物:%s(近%d/%d) 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
-             "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s 気づき停止:%d回",
+             "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s 気づき停止:%d回 ジャイロ:%s",
              distance,
              Obstacle_IsBlocked() ? "あり" : "なし", Obstacle_NearCount(), Obstacle_SampleCount(),
              approach, s.lightAdc,
@@ -99,7 +112,7 @@ static void PrintStatus(unsigned long nowMs) {
              (Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : "")),
              Eyes_Name(Eyes_Get()),
              Arbiter_ActiveName(LAYER_BODY), Arbiter_ActiveName(LAYER_EYES),
-             noticeBehavior.stopCount());
+             noticeBehavior.stopCount(), gyro);
 }
 
 // ------------------------ デバッグキー（回転角の測定用）------------------------ //
@@ -121,6 +134,9 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
   Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
   Log_Printf("キー", "t:試験の集計と、落ちる直前の流れ（足あと）を表示  h:試験の集計を今すぐ保存（止まっているときだけ）  x:集計と足あとを消去（5秒以内に2回）");
+  Log_Printf("キー", "ジャイロ：j:いまの値と設定  z:ゼロ点補正のやり直し（止まっているときだけ）  3・4・7・8 で回ると、止まったあとに回った角度が出ます");
+  Log_Printf("キー", "  m:静止測定 %d秒（一時停止中・床に置いて触らない）  n:モーターの振動の測定 約%d秒（一時停止中・車輪を浮かせ、前を30cm以上あける。どのキーでも中断）",
+             GYRO_MEASURE_STATIC_MS / 1000, (3 * GYRO_SPIN_SEGMENT_MS + GYRO_SPIN_RAMP_MS + GYRO_SPIN_GAP_MS) / 1000);
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -138,6 +154,10 @@ static void PrintKeyHelp(void) {
 static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
   if (debugTurnBehavior.isBusy()) {
     Log_Printf("キー", "回転の最中（または予約済み）なので無視します");
+    return;
+  }
+  if (debugGyroSpinBehavior.isBusy()) {
+    Log_Printf("キー", "モーターの振動の測定（n）の最中なので無視します");
     return;
   }
   if (Safety_IsLifted()) {
@@ -169,6 +189,81 @@ static void RequestContTurn(TurnKind kind) {
     return;
   }
   RequestDebugTurn(kind, ContTurnMs());
+}
+
+// ------------------------ デバッグキー（ジャイロの測定）------------------------ //
+
+// m：静止測定。一時停止中で、車体が止まっているときだけ受け付ける
+static void RequestStaticMeasure(unsigned long nowMs) {
+  if (GyroMeasure_IsStaticRunning()) {
+    Log_Printf("キー", "静止測定の最中です");
+    return;
+  }
+  if (!Pause_IsPaused()) {
+    Log_Printf("キー", "静止測定は一時停止中（p）にしてから押してください");
+    return;
+  }
+  if (!Gyro_IsReading()) {
+    Log_Printf("キー", "ジャイロが読めていないので測れません（状態：%s。z で初期化をやり直せます）", Gyro_StateName());
+    return;
+  }
+  if (debugTurnBehavior.isBusy() || debugGyroSpinBehavior.isBusy() || !Motion_IsStill()) {
+    Log_Printf("キー", "車体が動いているので無視します（止まってから押してください）");
+    return;
+  }
+  if (!Gyro_IsCalibrated()) {
+    Log_Printf("キー", "ゼロ点が未補正です（補正後の値は出ません）。そのまま測ります");
+  }
+  GyroMeasure_StartStatic(nowMs);
+}
+
+// n：モーターの振動の測定。一時停止中で、車輪が浮いている（ライン 111）ときだけ受け付ける
+static void RequestGyroSpin(void) {
+  const SensorData &s = Sensors_Get();
+  if (!Pause_IsPaused()) {
+    Log_Printf("キー", "モーターの振動の測定は一時停止中（p）にしてから押してください");
+    return;
+  }
+  if (!Gyro_IsReading()) {
+    Log_Printf("キー", "ジャイロが読めていないので測れません（状態：%s。z で初期化をやり直せます）", Gyro_StateName());
+    return;
+  }
+  if (GyroMeasure_IsStaticRunning()) {
+    Log_Printf("キー", "静止測定の最中なので無視します");
+    return;
+  }
+  if (debugTurnBehavior.isBusy() || !Motion_IsStill()) {
+    Log_Printf("キー", "車体が動いているので無視します（止まってから押してください）");
+    return;
+  }
+  if (Safety_IsTrackLost() || !s.trackReadOk) {
+    Log_Printf("キー", "ライントラッキングが読めないので無視します");
+    return;
+  }
+  if (s.track != SAFETY_LIFT_TRACK || !Safety_IsLifted()) {
+    Log_Printf("キー", "車輪を浮かせてから押してください（ライントラッキングが 111 のときだけ受け付けます。いま %d%d%d）",
+               s.track & 0x01, (s.track >> 1) & 0x01, (s.track >> 2) & 0x01);
+    return;
+  }
+  if (Obstacle_IsEmergency()) {
+    Log_Printf("キー", "前が近すぎます（%.1fcm。%.0fcm 未満は非常停止）。前を30cm以上あけてから押してください",
+               Obstacle_LastCm(), OBSTACLE_EMERGENCY_CM);
+    return;
+  }
+  debugGyroSpinBehavior.request();
+}
+
+// z：ゼロ点補正のやり直し。車体が止まっているときだけ受け付ける
+static void RequestGyroCalibration(unsigned long nowMs) {
+  if (debugTurnBehavior.isBusy() || debugGyroSpinBehavior.isBusy() || !Motion_IsStill()) {
+    Log_Printf("キー", "車体が動いているので無視します（止まってから押してください）");
+    return;
+  }
+  if (GyroMeasure_IsStaticRunning()) {
+    Log_Printf("キー", "静止測定の最中なので無視します");
+    return;
+  }
+  Gyro_RequestCalibration(nowMs);
 }
 
 // 回転の調整キー。一時停止中だけ効き、回転の最中は受け付けない
@@ -227,6 +322,13 @@ static void HandleSerialKeys(void) {
     if (repeat) {
       continue;
     }
+    // モーターの振動の測定（n）の最中は、どのキーでも中断する（そのキーの本来の働きはしない）
+    if (debugGyroSpinBehavior.isBusy()) {
+      char reason[32];
+      snprintf(reason, sizeof(reason), "キー '%c'", c);
+      debugGyroSpinBehavior.abort(reason, now);
+      continue;
+    }
     switch (c) {
       case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT));   break;
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
@@ -256,7 +358,12 @@ static void HandleSerialKeys(void) {
         TestStats_Print(now);
         Trace_Print();
         PrintBusStats();
+        Gyro_Print();
         break;
+      case 'j': Gyro_PrintNow(); break;
+      case 'z': RequestGyroCalibration(now); break;
+      case 'm': RequestStaticMeasure(now); break;
+      case 'n': RequestGyroSpin(); break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;
@@ -272,7 +379,7 @@ static void HandleSerialKeys(void) {
 
 void setup() {
   Log_Setup();
-  Log_Printf("起動", "Nova スプリント3（ID25 うろうろ・ID15 障害物で困る・ID26 詰まり脱出）");
+  Log_Printf("起動", "Nova スプリント3.5（ID25 うろうろ・ID15 障害物で困る・ID26 詰まり脱出＋ジャイロ：測るだけ）");
 
   uint8_t resetCode = Reset_ReasonCode();
   Log_Printf("起動", "リセット理由：%s%s", Reset_ReasonName(resetCode),
@@ -301,9 +408,11 @@ void setup() {
   Safety_Setup();
   Eyes_Setup();
   Motion_Setup();
+  Gyro_Setup(millis());   // 初期化は loop() の中で1段ずつ進む（WHO_AM_I の確認 → 設定 → ゼロ点補正）
 
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
+  Arbiter_Register(&debugGyroSpinBehavior);
   Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&stuckBehavior);
   Arbiter_Register(&noticeBehavior);
@@ -325,10 +434,16 @@ void loop() {
   HandleSerialKeys();
   uint32_t irCode;
   if (Ir_Poll(&irCode) && irCode == IR_BUTTON_PAUSE) {   // 受信したボタンは hal_ir が1行出す
-    TogglePause("リモコン ▶", now);
+    if (debugGyroSpinBehavior.isBusy()) {
+      debugGyroSpinBehavior.abort("リモコン ▶", now);   // 測定（n）の最中は、一時停止を切り替えずに中断だけする
+    } else {
+      TogglePause("リモコン ▶", now);
+    }
   }
   Buzzer_Update(now);
   Sensors_Update(now);
+  Gyro_Update(now);          // ジャイロの FIFO を読んで向きを積算する（測るだけ。動きには使わない）
+  GyroMeasure_Update(now);
   Neck_Update(now);
   Obstacle_Update(Sensors_Get(), now);
 
