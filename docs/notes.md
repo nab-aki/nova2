@@ -5,8 +5,8 @@
 
 ## 1. ビルドと書き込み
 
-- **書き込みは、ユーザーが指示したときだけ。書き込み前にユーザーがシリアルモニタを閉じる**（COM3 が使用中だと失敗する）。
-- 本体の書き込み：`~/.platformio/penv/Scripts/pio.exe run -t upload --upload-port COM3`（fnk0053）。
+- **書き込みは、ユーザーが指示したときだけ。書き込み前にユーザーがシリアルモニタを閉じる**（COM4 が使用中だと失敗する）。
+- 本体の書き込み：`~/.platformio/penv/Scripts/pio.exe run -t upload --upload-port COM4`（fnk0053）。
   ツールは `-d tools/<名前>` を付ける。ツールを書き込むと本体のファームは上書きされるので、あとで本体を書き戻す。
 - `pio.exe device list` でポートが見えないときは、USBケーブル・本体の電源を確認する。
 - ビルドだけは `pio run`。ホストに g++ はない。
