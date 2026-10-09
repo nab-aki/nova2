@@ -373,7 +373,7 @@ void PCA9685::resetAllDevices()
 {
   wire_ptr_->beginTransmission(GENERAL_CALL_DEVICE_ADDRESS);
   wire_ptr_->write(SWRST);
-  wire_ptr_->endTransmission();
+  novaCountTx(wire_ptr_->endTransmission());   // [Nova] 戻り値を捨てずに数える
   delay(10);
   wakeAll();
 }

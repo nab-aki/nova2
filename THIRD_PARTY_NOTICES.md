@@ -6,9 +6,9 @@ pulled in as dependencies and keep their own, separate licenses.
 
 | Library | Location | Author | License | Modified by Nova? |
 |---|---|---|---|---|
-| PCA9685 | `lib/PCA9685/` | Peter Polidoro (Janelia Research Campus) | 3-clause BSD | No |
+| PCA9685 | `lib/PCA9685/` | Peter Polidoro (Janelia Research Campus) | 3-clause BSD | **Yes** — see below |
 | PCF8574 | `lib/PCF8574/` | Rob Tillaart | MIT | No |
-| Freenove_VK16K33_Lib_For_ESP32 | `lib/Freenove_VK16K33_Lib_For_ESP32/` | Freenove | Unlicense (public domain) | No |
+| Freenove_VK16K33_Lib_For_ESP32 | `lib/Freenove_VK16K33_Lib_For_ESP32/` | Freenove | Unlicense (public domain) | **Yes** — see below |
 | Freenove_WS2812_Lib_for_ESP32 | `lib/Freenove_WS2812_Lib_for_ESP32/` | Freenove | LGPL-3.0 | **Yes** — see below |
 | IRremoteESP8266 | fetched by PlatformIO (`lib_deps`, not vendored in `lib/`) | David Conran and contributors (crankyoldgit) | LGPL-2.1 | No |
 
@@ -23,6 +23,19 @@ v2.0.1 release, with a small patch so it builds against Arduino-ESP32 2.x
 [lib/Freenove_WS2812_Lib_for_ESP32/NOVA_PATCH.md](lib/Freenove_WS2812_Lib_for_ESP32/NOVA_PATCH.md),
 and the modified lines are marked `[Nova]` in the source. It remains under
 the original LGPL-3.0 license.
+
+## PCA9685 and Freenove_VK16K33_Lib_For_ESP32 — modifications
+
+Both vendored copies (`lib/PCA9685/`, v3.0.3, and
+`lib/Freenove_VK16K33_Lib_For_ESP32/`, v1.0.0) carry the same minimal patch:
+the return values of `Wire.endTransmission()` / `Wire.requestFrom()`, which
+upstream discards, are counted in three public counters (`nova_i2c_total`,
+`nova_i2c_fail`, `nova_i2c_timeout`) so that I2C failures can be reported per
+device. What is sent on the bus is unchanged. The change is documented in
+[lib/PCA9685/NOVA_PATCH.md](lib/PCA9685/NOVA_PATCH.md) and
+[lib/Freenove_VK16K33_Lib_For_ESP32/NOVA_PATCH.md](lib/Freenove_VK16K33_Lib_For_ESP32/NOVA_PATCH.md)
+(one per library), and the modified lines are marked `[Nova]` in the
+source. Each library remains under its original license.
 
 ## Pin numbers, I2C addresses and similar hardware facts
 

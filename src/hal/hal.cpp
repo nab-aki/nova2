@@ -1,9 +1,11 @@
 #include "hal.h"
 
+#include "hal_i2c.h"
 #include "hal_pca9685.h"
 
 bool Hal_Setup(void) {
-  Pca9685_Setup();   // I2Cバスの初期化を含む。最初に呼ぶ
+  I2c_Setup();       // I2Cバスの初期化（速度・タイムアウト）。最初に呼ぶ
+  Pca9685_Setup();
   Motor_Setup();     // 起動直後は必ず停止状態にする
   Servo_Setup();     // 首は正面・水平から始める
   Matrix_Setup();

@@ -31,6 +31,12 @@
   class Freenove_ESP32_VK16K33
   {
     public:
+	  // [Nova] I2C の送信回数と失敗の累計（元のライブラリは endTransmission の戻り値を捨てている）。
+	  // timeout は、送信がタイムアウトした回数（fail に含む）
+	  unsigned long nova_i2c_total = 0;
+	  unsigned long nova_i2c_fail = 0;
+	  unsigned long nova_i2c_timeout = 0;
+
 	  uint16_t *_buffer;
 	  void init(uint8_t addr = 0x71);
 
@@ -66,6 +72,9 @@
       bool     _hFlipped;
       int      _brightness;
 	  
+      // [Nova] 送信の結果（endTransmission の戻り値。0＝成功、5＝タイムアウト）を数える
+      void novaCountTx(uint8_t code);
+
       void writeRow(uint8_t row);
       void setPixel(uint8_t row, uint8_t col, uint8_t val, bool rowDirection);
   };

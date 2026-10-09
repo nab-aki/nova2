@@ -11,4 +11,7 @@ bool Track_Setup(void);
 // 3ビットの値を返す：bit0=左、bit1=中央、bit2=右（公式サンプルと同じ並び）
 uint8_t Track_Read(void);
 
+// 直前の Track_Read() が読めたか。読めなかったときの戻り値は前回の値（信用しない）
+bool Track_LastReadOk(void);
+
 #endif // NOVA_HAL_TRACK_H

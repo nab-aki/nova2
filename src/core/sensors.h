@@ -20,6 +20,7 @@ struct SensorData {
   // ライントラッキング（bit0=左、bit1=中央、bit2=右。実測：床=000、持ち上げ=111）
   uint8_t track;
   bool trackUpdated;           // このループで読み取ったか（持ち上げの判定は読んだ回数で数える）
+  bool trackReadOk;            // 直近の読み取りが成功したか。失敗のとき track は前回の値のまま（信用しない）
 
   // 電池
   int batteryAdc;

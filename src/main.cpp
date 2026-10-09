@@ -37,6 +37,7 @@
 #include "core/trace.h"
 #include "core/turn_tuning.h"
 #include "hal/hal.h"
+#include "hal/hal_i2c.h"
 #include "hal/hal_log.h"
 
 static BlinkBehavior blinkBehavior;
@@ -94,7 +95,8 @@ static void PrintStatus(unsigned long nowMs) {
              Servo_GetAngle(SERVO_PAN), Servo_GetAngle(SERVO_TILT),
              Neck_OwnerName(Neck_Owner()), Neck_IsSteady(nowMs) ? "安定" : "動作中",
              Safety_IsStopping() ? " 安全:停止中" : "",
-             Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : ""),
+             Safety_IsTrackLost() ? " ライン読めず" :
+             (Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : "")),
              Eyes_Name(Eyes_Get()),
              Arbiter_ActiveName(LAYER_BODY), Arbiter_ActiveName(LAYER_EYES),
              noticeBehavior.stopCount());
@@ -139,7 +141,8 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
     return;
   }
   if (Safety_IsLifted()) {
-    Log_Printf("キー", "持ち上げられているので無視します");
+    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                  : "持ち上げられているので無視します");
     return;
   }
   if (troubleBehavior.isBusy()) {
@@ -195,6 +198,14 @@ static void TogglePause(const char *source, unsigned long nowMs) {
   TestStats_OnPauseToggle(paused, nowMs);
 }
 
+// I2C の失敗（機器ごと）と、ライントラッキングが読めずに止めた回数。起動からの累計で、保存はしない
+static void PrintBusStats(void) {
+  I2c_PrintStats();
+  Log_Printf("I2C", "ライントラッキングが読めずに止めた回数：%lu回（%d回続けて読めないと止める。持ち上げとは別に数える）%s",
+             (unsigned long)Safety_TrackLostCount(), SAFETY_TRACK_FAIL_COUNT,
+             Safety_IsTrackLost() ? "【いま止めています】" : "");
+}
+
 static void HandleSerialKeys(void) {
   static char lastKey = 0;
   static unsigned long lastKeyMs = 0;
@@ -244,6 +255,7 @@ static void HandleSerialKeys(void) {
       case 't':
         TestStats_Print(now);
         Trace_Print();
+        PrintBusStats();
         break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;

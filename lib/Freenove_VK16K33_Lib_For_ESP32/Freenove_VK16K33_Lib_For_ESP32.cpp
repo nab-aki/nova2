@@ -34,7 +34,7 @@ void Freenove_ESP32_VK16K33::init(uint8_t addr)
   Wire.begin();
   Wire.beginTransmission(_i2c_addr);
   Wire.write(0x21); // turn it on
-  Wire.endTransmission();
+  novaCountTx(Wire.endTransmission());   // [Nova] 戻り値を捨てずに数える
   
   // set blink off + brightness all the way up
   setBlink(VK16K33_BLINK_OFF);
@@ -61,7 +61,7 @@ void Freenove_ESP32_VK16K33::init(uint8_t addr, int sda, int scl)
   Wire.begin(sda,scl);
   Wire.beginTransmission(_i2c_addr);
   Wire.write(0x21); // turn it on
-  Wire.endTransmission();
+  novaCountTx(Wire.endTransmission());   // [Nova] 戻り値を捨てずに数える
   
   // set blink off + brightness all the way up
   setBlink(VK16K33_BLINK_OFF);
@@ -71,6 +71,22 @@ void Freenove_ESP32_VK16K33::init(uint8_t addr, int sda, int scl)
   show();
 }
 #endif
+
+/**
+ * [Nova] count the result of Wire.endTransmission() (0: success, 5: timeout).
+ */
+void Freenove_ESP32_VK16K33::novaCountTx(uint8_t code)
+{
+  nova_i2c_total++;
+  if (code != 0)
+  {
+    nova_i2c_fail++;
+    if (code == 5)
+    {
+      nova_i2c_timeout++;
+    }
+  }
+}
 
 /**
  * Sets the brightness of the display.
@@ -83,7 +99,7 @@ void Freenove_ESP32_VK16K33::setBrightness(uint8_t brightness)
   // send the command
   Wire.beginTransmission(_i2c_addr);
   Wire.write(VK16K33_CMD_DIMMING | brightness);
-  Wire.endTransmission();
+  novaCountTx(Wire.endTransmission());   // [Nova] 戻り値を捨てずに数える
 }
 
 
@@ -94,7 +110,7 @@ void Freenove_ESP32_VK16K33::setBlink(uint8_t blink)
 {
   Wire.beginTransmission(_i2c_addr);
   Wire.write(VK16K33_CMD_SETUP | VK16K33_DISPLAY_ON | blink);
-  Wire.endTransmission();
+  novaCountTx(Wire.endTransmission());   // [Nova] 戻り値を捨てずに数える
 }
 
 /**
@@ -233,7 +249,7 @@ void Freenove_ESP32_VK16K33::show(void)
     writeRow(row);
   }
   
-  Wire.endTransmission();
+  novaCountTx(Wire.endTransmission());   // [Nova] 戻り値を捨てずに数える
 }
 
 

@@ -199,7 +199,36 @@ public:
   void setSingleDeviceOutputsHighImpedanceWhenDisabled(DeviceAddress device_address);
   void setAllDevicesOutputsHighImpedanceWhenDisabled();
 
+  // [Nova] I2C の通信回数と失敗の累計（元のライブラリは endTransmission・requestFrom の戻り値を捨てている）。
+  // 送信1回・受信1回をそれぞれ1と数える。timeout は、送信がタイムアウトした回数（fail に含む）
+  uint32_t nova_i2c_total = 0;
+  uint32_t nova_i2c_fail = 0;
+  uint32_t nova_i2c_timeout = 0;
+
 private:
+  // [Nova] 送信の結果（endTransmission の戻り値。0＝成功、5＝タイムアウト）を数える
+  void novaCountTx(uint8_t code)
+  {
+    ++nova_i2c_total;
+    if (code != 0)
+    {
+      ++nova_i2c_fail;
+      if (code == 5)
+      {
+        ++nova_i2c_timeout;
+      }
+    }
+  }
+  // [Nova] 受信の結果（頼んだバイト数を受け取れたか）を数える
+  void novaCountRx(bool ok)
+  {
+    ++nova_i2c_total;
+    if (!ok)
+    {
+      ++nova_i2c_fail;
+    }
+  }
+
   const static DeviceAddress DEVICE_ADDRESS_MIN = 0x40;
   const static DeviceAddress DEVICE_ADDRESS_MAX = 0x7B;
   uint8_t device_count_;

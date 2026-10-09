@@ -12,11 +12,20 @@ static bool debugTurnActive = false;   // デバッグ回転の1ステップの�
 static bool lifted = false;
 static int liftClearCount = 0;   // 床に戻ってから、111 以外を読んだ連続回数
 
+// ライントラッキング（PCF8574）が読めない状態。持ち上げを判定できないので、持ち上げと同じように止める
+static bool trackLost = false;
+static int trackFailCount = 0;       // 続けて読めなかった回数
+static int trackOkCount = 0;         // 読めない状態になってから、続けて読めた回数
+static uint32_t trackLostTotal = 0;  // 読めない状態になった回数（起動から。t で表示）
+
 void Safety_Setup(void) {
   stopping = false;
   debugTurnActive = false;
   lifted = false;
   liftClearCount = 0;
+  trackLost = false;
+  trackFailCount = 0;
+  trackOkCount = 0;
 }
 
 // 車体が動いている（または動こうとしている）か。回転も含む（core/motion.* の共通判定）
@@ -32,10 +41,41 @@ static bool MovingTowardObstacle(void) {
   return forward || Motion_IsPivoting();
 }
 
+// ライントラッキングが読めているかを見張る。読み取ったときだけ数える。
+// 続けて読めなければ「読めない状態」にして止め、続けて読めるようになったら戻す
+static void WatchTrackRead(const SensorData &sensors) {
+  if (!sensors.trackUpdated) {
+    return;
+  }
+  if (!sensors.trackReadOk) {
+    trackOkCount = 0;
+    if (!trackLost && ++trackFailCount >= SAFETY_TRACK_FAIL_COUNT) {
+      trackLost = true;
+      trackLostTotal++;
+      Log_Printf("安全", "ライントラッキングが%d回続けて読めません。持ち上げを判定できないので、モーターを止めます",
+                 SAFETY_TRACK_FAIL_COUNT);
+    }
+    return;
+  }
+  trackFailCount = 0;
+  if (!trackLost) {
+    return;
+  }
+  // 戻すのは慎重に。続けて読めたときだけ解除する（持ち上げの解除と同じ回数）
+  if (++trackOkCount >= SAFETY_LIFT_CLEAR_COUNT) {
+    trackLost = false;
+    trackOkCount = 0;
+    Log_Printf("安全", "ライントラッキングが読めるようになりました。振る舞いは最初からやり直します");
+  }
+}
+
 // 持ち上げ（ライン 111）を見張る。読み取ったときだけ数える
 static void WatchLift(const SensorData &sensors) {
   if (!sensors.trackUpdated) {
     return;
+  }
+  if (!sensors.trackReadOk) {
+    return;   // 読めなかったときの値は前回のまま。判定に使わない
   }
   if (sensors.track == SAFETY_LIFT_TRACK) {
     liftClearCount = 0;
@@ -59,6 +99,7 @@ static void WatchLift(const SensorData &sensors) {
 }
 
 void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
+  WatchTrackRead(sensors);
   WatchLift(sensors);
 
   // 1. 車体が動いている間は首を正面・水平に固定する。止まったら使用権を返す
@@ -69,8 +110,9 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
     Neck_Release(NECK_OWNER_SAFETY);
   }
 
-  // 2. 持ち上げられていたら、向きに関わらずすべての動きを止める
-  if (lifted) {
+  // 2. 持ち上げられていたら（または、ライントラッキングが読めず持ち上げを判定できなければ）、
+  //    向きに関わらずすべての動きを止める
+  if (lifted || trackLost) {
     if (BodyIsMoving()) {
       Motion_EmergencyStop();   // 目標速度も回転も0に戻る
     }
@@ -99,5 +141,13 @@ bool Safety_IsStopping(void) {
 }
 
 bool Safety_IsLifted(void) {
-  return lifted;
+  return lifted || trackLost;
+}
+
+bool Safety_IsTrackLost(void) {
+  return trackLost;
+}
+
+uint32_t Safety_TrackLostCount(void) {
+  return trackLostTotal;
 }

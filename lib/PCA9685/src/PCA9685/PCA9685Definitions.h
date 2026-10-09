@@ -23,7 +23,7 @@ void PCA9685::write(DeviceAddress device_address,
     write_byte = (data >> (BITS_PER_BYTE * byte_n)) & BYTE_MAX;
     wire_ptr_->write(write_byte);
   }
-  wire_ptr_->endTransmission();
+  novaCountTx(wire_ptr_->endTransmission());   // [Nova] 戻り値を捨てずに数える
 }
 
 template<typename T>
@@ -35,9 +35,9 @@ void PCA9685::read(DeviceIndex device_index,
   int device_address = device_addresses_[device_index];
   wire_ptr_->beginTransmission(device_address);
   wire_ptr_->write(register_address);
-  wire_ptr_->endTransmission();
+  novaCountTx(wire_ptr_->endTransmission());   // [Nova] 戻り値を捨てずに数える
 
-  wire_ptr_->requestFrom(device_address,byte_count);
+  novaCountRx(wire_ptr_->requestFrom(device_address,byte_count) == byte_count);   // [Nova] 同上
   data = 0;
   for (int byte_n=0; byte_n<byte_count; ++byte_n)
   {
