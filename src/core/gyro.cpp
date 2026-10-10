@@ -1,8 +1,11 @@
 #include "gyro.h"
 
+#include <stdarg.h>
+
 #include "../config.h"
 #include "../hal/hal_gyro.h"
 #include "../hal/hal_log.h"
+#include "debug_pause.h"
 #include "motion.h"
 
 static GyroState state = GYRO_PROBE;
@@ -40,6 +43,168 @@ static GyroSampleListener listener = NULL;
 static uint32_t readUsMax = 0;
 static uint64_t readUsSum = 0;
 static uint32_t readCount = 0;
+static uint32_t readOver10msCount = 0;   // 10ms を超えた回数（I2C だけなら 4件で約5ms。超えたら別の原因を疑う）
+// 最大だった読み取りの内訳（I2C に使った時間と、それ以外＝集計・ログ・割り込みなど）
+static uint32_t readMaxWords = 0;
+static uint32_t readMaxI2cUs = 0;
+static uint32_t readMaxOtherUs = 0;
+
+// ------------------------ ログをためて、あとで出す ------------------------ //
+// FIFO を読む途中でシリアルに出すと、115200bps では 1行で約10ms 待たされる（送信バッファが 0 のため）。
+// 読み取りの中から出すログは、ここにためて、loop の最後（Gyro_PrintPending）に1周1行ずつ出す。
+// 回転中は出さない（止める判断を遅らせないため）。出す行は「発生 ○○ms」を付けて、実際の時刻が分かるようにする。
+static char logQueue[GYRO_LOG_QUEUE_COUNT][GYRO_LOG_LINE_BYTES];
+static int logHead = 0;     // 次に出す位置
+static int logCount = 0;
+static uint32_t logDropped = 0;        // 満杯で捨てた行数
+static uint32_t logDroppedShown = 0;   // そのうち、出力済みの数
+
+static void QueueLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void QueueLog(const char *fmt, ...) {
+  if (logCount >= GYRO_LOG_QUEUE_COUNT) {
+    logDropped++;
+    return;
+  }
+  char *slot = logQueue[(logHead + logCount) % GYRO_LOG_QUEUE_COUNT];
+  int used = snprintf(slot, GYRO_LOG_LINE_BYTES, "（発生 %lums）", millis());
+  if (used < 0 || used >= GYRO_LOG_LINE_BYTES) {
+    return;
+  }
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(slot + used, GYRO_LOG_LINE_BYTES - used, fmt, args);
+  va_end(args);
+  logCount++;
+}
+
+// ------------------------ 飛びの記録 ------------------------ //
+// 飛び＝いずれかの軸で、1件前との差が GYRO_JUMP_DPS 以上。値は捨てずに積算へ足す（数えて記録するだけ）。
+// 軸ごと・そのときの車体の動きごとに数え、直近 GYRO_JUMP_LOG_COUNT 件は軸・大きさを残す。
+enum JumpMotion {
+  JUMP_MOTION_STILL,    // 停止
+  JUMP_MOTION_PAUSED,   // 一時停止中（止まっている）
+  JUMP_MOTION_FORWARD,  // 前進
+  JUMP_MOTION_BACK,     // 後退
+  JUMP_MOTION_TURN,     // 回転
+  JUMP_MOTION_COUNT
+};
+static const char *const JUMP_MOTION_NAMES[JUMP_MOTION_COUNT] = {"停止", "一時停止中", "前進", "後退", "回転"};
+static const char AXIS_NAMES[3] = {'X', 'Y', 'Z'};
+
+struct JumpRecord {
+  unsigned long ms;
+  uint8_t axis;
+  uint8_t motion;
+  float prevDps;
+  float nowDps;
+};
+static JumpRecord jumpLog[GYRO_JUMP_LOG_COUNT];
+static int jumpLogHead = 0;
+static int jumpLogCount = 0;
+static uint32_t jumpsByAxisMotion[3][JUMP_MOTION_COUNT];
+
+static JumpMotion CurrentJumpMotion(void) {
+  if (Motion_IsTurning()) {
+    return JUMP_MOTION_TURN;
+  }
+  float speed = Motion_GetSpeed();
+  if (speed >= MOTOR_SPEED_EPSILON) {
+    return JUMP_MOTION_FORWARD;
+  }
+  if (speed <= -MOTOR_SPEED_EPSILON) {
+    return JUMP_MOTION_BACK;
+  }
+  return Pause_IsPaused() ? JUMP_MOTION_PAUSED : JUMP_MOTION_STILL;
+}
+
+static void NoteJump(int axis, float prevDps, float nowDps, unsigned long nowMs) {
+  JumpMotion motion = CurrentJumpMotion();
+  jumpsByAxisMotion[axis][motion]++;
+  JumpRecord &r = jumpLog[jumpLogHead];
+  r.ms = nowMs;
+  r.axis = (uint8_t)axis;
+  r.motion = (uint8_t)motion;
+  r.prevDps = prevDps;
+  r.nowDps = nowDps;
+  jumpLogHead = (jumpLogHead + 1) % GYRO_JUMP_LOG_COUNT;
+  if (jumpLogCount < GYRO_JUMP_LOG_COUNT) {
+    jumpLogCount++;
+  }
+}
+
+// ------------------------ 止まっている間のゼロ点の観察 ------------------------ //
+// 車体が GYRO_ZERO_WATCH_STILL_MS 以上止まっている間、GYRO_CAL_SAMPLES 件の平均を取り、いまのゼロ点との差を記録する。
+// 記録するだけで、ゼロ点は書き換えない（決定 D6。差は 0.005dps 程度で、1回の回転の角度には効かない）。
+static bool stillTracking = false;        // 測定中の状態で、車体が止まっている
+static unsigned long stillSinceMs = 0;
+static int zwCount = 0;                   // 平均を取っている途中の件数
+static double zwSum[3];
+static float zwMin[3];
+static float zwMax[3];
+static uint32_t zwDone = 0;               // 平均を取り終えた回数
+static uint32_t zwRejectedSpread = 0;     // 振れ幅が GYRO_CAL_MAX_SPREAD_DPS を超えて捨てた回数
+static uint32_t zwRejectedMoved = 0;      // 取っている途中で車体が動いて捨てた回数
+static float zwLastDiffDps[3];            // 直近の「平均 − ゼロ点」
+static unsigned long zwLastMs = 0;
+static float zwMaxAbsDiffDps[3];
+
+static void ZeroWatchReset(void) {
+  zwCount = 0;
+  for (int a = 0; a < 3; a++) {
+    zwSum[a] = 0.0;
+    zwMin[a] = 0.0f;
+    zwMax[a] = 0.0f;
+  }
+}
+
+static void ZeroWatchUpdateState(unsigned long nowMs) {
+  bool still = (state == GYRO_RUNNING) && Motion_IsStill();
+  if (!still) {
+    if (zwCount > 0) {
+      zwRejectedMoved++;
+    }
+    ZeroWatchReset();
+    stillTracking = false;
+  } else if (!stillTracking) {
+    stillTracking = true;
+    stillSinceMs = nowMs;
+    ZeroWatchReset();
+  }
+}
+
+static void ZeroWatchAdd(const GyroSample &s, unsigned long nowMs) {
+  if (!stillTracking || nowMs - stillSinceMs < GYRO_ZERO_WATCH_STILL_MS) {
+    return;
+  }
+  for (int a = 0; a < 3; a++) {
+    float v = s.rawDps[a];
+    zwSum[a] += v;
+    if (zwCount == 0 || v < zwMin[a]) zwMin[a] = v;
+    if (zwCount == 0 || v > zwMax[a]) zwMax[a] = v;
+  }
+  if (++zwCount < GYRO_CAL_SAMPLES) {
+    return;
+  }
+  bool moved = false;
+  for (int a = 0; a < 3; a++) {
+    if (zwMax[a] - zwMin[a] > GYRO_CAL_MAX_SPREAD_DPS) {
+      moved = true;
+    }
+  }
+  if (moved) {
+    zwRejectedSpread++;
+  } else {
+    zwDone++;
+    zwLastMs = nowMs;
+    for (int a = 0; a < 3; a++) {
+      zwLastDiffDps[a] = (float)(zwSum[a] / zwCount) - zeroDps[a];
+      if (fabsf(zwLastDiffDps[a]) > zwMaxAbsDiffDps[a]) {
+        zwMaxAbsDiffDps[a] = fabsf(zwLastDiffDps[a]);
+      }
+    }
+  }
+  ZeroWatchReset();
+}
 
 // ------------------------ ゼロ点補正 ------------------------ //
 static unsigned long calDiscardUntilMs = 0;
@@ -84,7 +249,7 @@ static void CalAdd(const GyroSample &s, unsigned long nowMs) {
   }
   if (moved) {
     counters.calRetries++;
-    Log_Printf("ジャイロ", "ゼロ点補正をやり直します（動いていた）：平均 X%+.2f Y%+.2f Z%+.2fdps／振れ幅 X%.2f Y%.2f Z%.2fdps"
+    QueueLog("ゼロ点補正をやり直します（動いていた）：平均 X%+.2f Y%+.2f Z%+.2fdps／振れ幅 X%.2f Y%.2f Z%.2fdps"
                "（振れ幅 %.1fdps・平均 ±%.1fdps を超えるとやり直し）",
                mean[0], mean[1], mean[2], spread[0], spread[1], spread[2],
                GYRO_CAL_MAX_SPREAD_DPS, GYRO_CAL_MAX_OFFSET_DPS);
@@ -92,7 +257,7 @@ static void CalAdd(const GyroSample &s, unsigned long nowMs) {
     return;
   }
 
-  Log_Printf("ジャイロ", "ゼロ点補正 完了（%d件）：補正前の平均 X%+.3f Y%+.3f Z%+.3fdps／振れ幅 X%.2f Y%.2f Z%.2fdps／"
+  QueueLog("ゼロ点補正 完了（%d件）：補正前の平均 X%+.3f Y%+.3f Z%+.3fdps／振れ幅 X%.2f Y%.2f Z%.2fdps／"
              "前のゼロ点 X%+.3f Y%+.3f Z%+.3fdps%s",
              calCount, mean[0], mean[1], mean[2], spread[0], spread[1], spread[2],
              zeroDps[0], zeroDps[1], zeroDps[2], calibrated ? "" : "（未補正）");
@@ -118,6 +283,8 @@ struct TurnRecord {
   long onsetMs;            // 回り始めるまでの時間（GYRO_TURN_ONSET_DPS を超えるまで。超えなければ負）
   uint32_t saturated;      // 頭打ちの件数
   uint32_t samples;
+  float stopRateDps;       // 止めた瞬間の角速度（符号つき。止めた時刻より前の最後の件）。惰性との関係を見るために残す
+  bool stopRateValid;      // 止めたあとの件が来て、stopRateDps が決まったか
   bool calibrated;         // ゼロ点補正が済んでいたか
   const char *endNote;     // 記録の締め方
 };
@@ -132,6 +299,7 @@ static unsigned long turnStartMs = 0;
 static unsigned long turnStopMs = 0;
 static double turnDriveDeg = 0.0;
 static double turnAfterDeg = 0.0;
+static float turnPrevRateDps = 0.0f;   // 止める前の、最後の件の角速度
 static long turnOnsetUs = -1;
 static bool turnRestRunning = false;
 static uint32_t turnRestStartUs = 0;
@@ -147,8 +315,14 @@ static void FormatTurn(const TurnRecord &r, char *out, size_t size) {
   } else {
     snprintf(onset, sizeof(onset), "なし");
   }
-  snprintf(out, size, "%s %lums：%+.1f°（止めるまで %+.1f°・止めたあと %+.1f°）最大 %+.0fdps 回り始め %s 頭打ち %lu件（%s%s）",
-           r.name, r.driveMs, r.driveDeg + r.afterDeg, r.driveDeg, r.afterDeg, r.peakDps, onset,
+  char stopRate[24];
+  if (r.stopRateValid) {
+    snprintf(stopRate, sizeof(stopRate), "%+.0fdps", r.stopRateDps);
+  } else {
+    snprintf(stopRate, sizeof(stopRate), "-");
+  }
+  snprintf(out, size, "%s %lums：%+.1f°（止めるまで %+.1f°・止めたあと %+.1f°）止めたとき %s 最大 %+.0fdps 回り始め %s 頭打ち %lu件（%s%s）",
+           r.name, r.driveMs, r.driveDeg + r.afterDeg, r.driveDeg, r.afterDeg, stopRate, r.peakDps, onset,
            (unsigned long)r.saturated, r.endNote, r.calibrated ? "" : "・ゼロ点 未補正");
 }
 
@@ -171,7 +345,7 @@ static void FinishTurn(const char *endNote) {
   }
   char line[256];
   FormatTurn(turn, line, sizeof(line));
-  Log_Printf("ジャイロ", "%s", line);
+  QueueLog("%s", line);
 }
 
 static void TurnAdd(const GyroSample &s) {
@@ -191,7 +365,12 @@ static void TurnAdd(const GyroSample &s) {
   }
   double stepDeg = (double)s.yawRateDps * s.dtS;
   bool afterStop = turnStopped && (int32_t)(s.timeUs - turnStopUs) > 0;
+  if (afterStop && !turn.stopRateValid) {
+    turn.stopRateDps = turnPrevRateDps;   // 止めた時刻より前の、最後の件
+    turn.stopRateValid = true;
+  }
   if (!afterStop) {
+    turnPrevRateDps = s.yawRateDps;
     turnDriveDeg += stepDeg;
     if (turnOnsetUs < 0 && fabsf(s.yawRateDps) >= GYRO_TURN_ONSET_DPS) {
       turnOnsetUs = sinceStartUs;
@@ -226,6 +405,9 @@ void Gyro_OnTurnStart(const char *name, unsigned long nowMs) {
   turn.peakDps = 0.0f;
   turn.saturated = 0;
   turn.samples = 0;
+  turn.stopRateDps = 0.0f;
+  turn.stopRateValid = false;
+  turnPrevRateDps = 0.0f;
   turn.calibrated = calibrated;
   turnStartUs = micros();
   turnStartMs = nowMs;
@@ -274,11 +456,11 @@ static void NoteFail(const char *what, unsigned long nowMs) {
   stateSinceMs = nowMs;
   backlog = false;
   if (probing) {
-    Log_Printf("ジャイロ", "応答がありません（%s が%d回続けて失敗）。ジャイロなしで動きます（z で確かめ直せます）",
+    QueueLog("応答がありません（%s が%d回続けて失敗）。ジャイロなしで動きます（z で確かめ直せます）",
                what, GYRO_FAIL_LIMIT);
   } else {
     counters.stops++;
-    Log_Printf("ジャイロ", "%s が%d回続けて失敗したので、読み取りをやめます。回転は時間ベースのままです（z で再開を試せます）",
+    QueueLog("%s が%d回続けて失敗したので、読み取りをやめます。回転は時間ベースのままです（z で再開を試せます）",
                what, GYRO_FAIL_LIMIT);
   }
   FinishTurn("ジャイロが止まったので打ち切り");
@@ -394,6 +576,7 @@ static void ProcessSample(const int16_t xyz[3], uint32_t timeUs, unsigned long n
     }
     if (haveLast && fabsf(s.rawDps[a] - lastRawDps[a]) >= GYRO_JUMP_DPS) {
       jumped = true;
+      NoteJump(a, lastRawDps[a], s.rawDps[a], nowMs);   // 値は捨てない（数えて記録するだけ）
     }
     lastRawDps[a] = s.rawDps[a];
   }
@@ -417,22 +600,26 @@ static void ProcessSample(const int16_t xyz[3], uint32_t timeUs, unsigned long n
   if (state == GYRO_CALIBRATING) {
     CalAdd(s, nowMs);
   }
+  ZeroWatchAdd(s, nowMs);
 }
 
 static void ReadFifo(unsigned long nowMs) {
   uint32_t beginUs = micros();
+  uint32_t i2cUs = 0;             // I2C に使った時間（これ以外は、集計・ログのため込み・割り込みなど）
   uint16_t words = 0;
   bool overrun = false;
-  if (!GyroHal_ReadFifoStatus(&words, &overrun)) {
+  bool statusOk = GyroHal_ReadFifoStatus(&words, &overrun);
+  uint32_t statusUs = micros();   // いちばん新しい件は、ほぼこの時刻のもの
+  i2cUs += statusUs - beginUs;
+  if (!statusOk) {
     backlog = false;
     NoteFail("FIFO の読み取り", nowMs);
     return;
   }
-  uint32_t statusUs = micros();   // いちばん新しい件は、ほぼこの時刻のもの
   bool failed = false;
   if (overrun) {
     counters.overruns++;
-    Log_Printf("ジャイロ", "FIFO があふれました（読むのが間に合わず、古いデータが消えた。%u件たまっていた）", (unsigned)words);
+    QueueLog("FIFO があふれました（読むのが間に合わず、古いデータが消えた。%u件たまっていた）", (unsigned)words);
   }
 
   uint16_t count = (words > GYRO_MAX_WORDS_PER_READ) ? GYRO_MAX_WORDS_PER_READ : words;
@@ -440,7 +627,10 @@ static void ReadFifo(unsigned long nowMs) {
   for (uint16_t i = 0; i < count; i++) {
     uint8_t tag = 0;
     int16_t xyz[3];
-    if (!GyroHal_ReadFifoWord(&tag, xyz)) {
+    uint32_t wordBeginUs = micros();
+    bool wordOk = GyroHal_ReadFifoWord(&tag, xyz);
+    i2cUs += micros() - wordBeginUs;
+    if (!wordOk) {
       backlog = false;
       failed = true;
       NoteFail("FIFO の読み取り", nowMs);
@@ -467,8 +657,14 @@ static void ReadFifo(unsigned long nowMs) {
   uint32_t elapsedUs = micros() - beginUs;
   readCount++;
   readUsSum += elapsedUs;
+  if (elapsedUs > 10000) {
+    readOver10msCount++;
+  }
   if (elapsedUs > readUsMax) {
     readUsMax = elapsedUs;
+    readMaxWords = count;
+    readMaxI2cUs = i2cUs;
+    readMaxOtherUs = (elapsedUs > i2cUs) ? elapsedUs - i2cUs : 0;
   }
 }
 
@@ -499,10 +695,14 @@ void Gyro_Update(unsigned long nowMs) {
   } else if (state == GYRO_CALIBRATING && !Motion_IsStill()) {
     state = GYRO_WAIT_CAL;
     stateSinceMs = nowMs;
-    Log_Printf("ジャイロ", "車体が動き出したので、ゼロ点補正を中断します（止まったらやり直します）");
+    QueueLog("車体が動き出したので、ゼロ点補正を中断します（止まったらやり直します）");
   }
 
-  if (!backlog && nowMs - lastStepMs < GYRO_READ_INTERVAL_MS) {
+  ZeroWatchUpdateState(nowMs);
+
+  // 回転中は読む間隔を短くする（止める判断の遅れを縮めるための準備。段2で使う）
+  unsigned long intervalMs = Motion_IsTurning() ? GYRO_READ_INTERVAL_TURN_MS : GYRO_READ_INTERVAL_MS;
+  if (!backlog && nowMs - lastStepMs < intervalMs) {
     return;
   }
   lastStepMs = nowMs;
@@ -613,20 +813,92 @@ void Gyro_Print(void) {
              (unsigned long)counters.saturated, (unsigned long)counters.jumps,
              (unsigned long)counters.otherTags, (unsigned long)counters.stops);
   if (readCount > 0) {
-    Log_Printf("ジャイロ", "1回の読み取りで loop を止めた時間：平均 %.2fms・最大 %.2fms（%lu回。%dms ごと）",
+    Log_Printf("ジャイロ", "1回の読み取りで loop を止めた時間：平均 %.2fms・最大 %.2fms（%lu回。ふだん %dms ごと・回転中 %dms ごと。1回に最大 %d件）／10ms 超 %lu回",
                (float)((double)readUsSum / readCount / 1000.0), readUsMax / 1000.0f,
-               (unsigned long)readCount, GYRO_READ_INTERVAL_MS);
+               (unsigned long)readCount, GYRO_READ_INTERVAL_MS, GYRO_READ_INTERVAL_TURN_MS, GYRO_MAX_WORDS_PER_READ,
+               (unsigned long)readOver10msCount);
+    Log_Printf("ジャイロ", "  最大だった読み取りの内訳：読んだ件数 %lu・I2C %.2fms・それ以外（集計・割り込みなど。ログは読み取りの外に出している）%.2fms",
+               (unsigned long)readMaxWords, readMaxI2cUs / 1000.0f, readMaxOtherUs / 1000.0f);
   }
+  if (logDropped > 0) {
+    Log_Printf("ジャイロ", "ためておくログがあふれて捨てた行：%lu行", (unsigned long)logDropped);
+  }
+
+  // 飛び：軸ごと・そのときの車体の動きごと（回転中の Z が0なら、回転の角度には影響していない）
+  Log_Printf("ジャイロ", "飛びの内訳（1件前との差が %.0fdps 以上。軸別の回数。値は捨てずに積算へ足している）：", GYRO_JUMP_DPS);
+  for (int m = 0; m < JUMP_MOTION_COUNT; m++) {
+    Log_Printf("ジャイロ", "  %s：X %lu／Y %lu／Z %lu", JUMP_MOTION_NAMES[m],
+               (unsigned long)jumpsByAxisMotion[0][m], (unsigned long)jumpsByAxisMotion[1][m],
+               (unsigned long)jumpsByAxisMotion[2][m]);
+  }
+  if (jumpLogCount > 0) {
+    Log_Printf("ジャイロ", "飛びの記録（直近%d件。新しい順。時刻はその飛びが起きた millis）：", jumpLogCount);
+    for (int i = 0; i < jumpLogCount; i++) {
+      int idx = (jumpLogHead - 1 - i + 2 * GYRO_JUMP_LOG_COUNT) % GYRO_JUMP_LOG_COUNT;
+      const JumpRecord &r = jumpLog[idx];
+      Log_Printf("ジャイロ", "  %d) %lums %c軸 %s：%+.1f → %+.1fdps（差 %+.1f）", i + 1, r.ms, AXIS_NAMES[r.axis],
+                 JUMP_MOTION_NAMES[r.motion], r.prevDps, r.nowDps, r.nowDps - r.prevDps);
+    }
+  }
+
+  // 止まっている間のゼロ点の観察
+  if (zwDone > 0) {
+    Log_Printf("ジャイロ", "ゼロ点の観察（止まって%.0f秒以上のあいだの %d件の平均 − いまのゼロ点。ゼロ点は書き換えない）："
+               "完了 %lu回・振れ幅が大きく捨てた %lu回・途中で動いて捨てた %lu回／直近（%lu秒前）X%+.3f Y%+.3f Z%+.3fdps"
+               "（Z は1分あたり %+.2f°）／絶対値の最大 X%.3f Y%.3f Z%.3fdps",
+               GYRO_ZERO_WATCH_STILL_MS / 1000.0f, GYRO_CAL_SAMPLES, (unsigned long)zwDone,
+               (unsigned long)zwRejectedSpread, (unsigned long)zwRejectedMoved, (millis() - zwLastMs) / 1000UL,
+               zwLastDiffDps[0], zwLastDiffDps[1], zwLastDiffDps[2], zwLastDiffDps[2] * 60.0f,
+               zwMaxAbsDiffDps[0], zwMaxAbsDiffDps[1], zwMaxAbsDiffDps[2]);
+  } else {
+    Log_Printf("ジャイロ", "ゼロ点の観察：まだありません（完了 0回・振れ幅が大きく捨てた %lu回・途中で動いて捨てた %lu回。止まって%.0f秒たってから %d件で1回）",
+               (unsigned long)zwRejectedSpread, (unsigned long)zwRejectedMoved, GYRO_ZERO_WATCH_STILL_MS / 1000.0f, GYRO_CAL_SAMPLES);
+  }
+
   if (turnLogCount == 0) {
     Log_Printf("ジャイロ", "回転の記録：まだありません");
     return;
   }
   Log_Printf("ジャイロ", "回転の記録（直近%d件。新しい順。正＝上から見て反時計回り）：", turnLogCount);
+  int ratioN = 0;
+  double ratioSum = 0.0;
+  float ratioMin = 0.0f;
+  float ratioMax = 0.0f;
   for (int i = 0; i < turnLogCount; i++) {
     int idx = (turnLogHead - 1 - i + 2 * GYRO_TURN_LOG_COUNT) % GYRO_TURN_LOG_COUNT;
     char line[256];
     FormatTurn(turnLog[idx], line, sizeof(line));
     Log_Printf("ジャイロ", "  %d) %s", i + 1, line);
+    const TurnRecord &r = turnLog[idx];
+    if (r.stopRateValid && fabsf(r.stopRateDps) >= 20.0f) {
+      float ratio = r.afterDeg / r.stopRateDps;   // 止めたあとの角度 ÷ 止めたときの角速度（秒）
+      ratioSum += ratio;
+      if (ratioN == 0 || ratio < ratioMin) ratioMin = ratio;
+      if (ratioN == 0 || ratio > ratioMax) ratioMax = ratio;
+      ratioN++;
+    }
+  }
+  if (ratioN > 0) {
+    Log_Printf("ジャイロ", "止めたあとの角度 ÷ 止めたときの角速度（惰性が角速度に比例するかを見る。直近%d件）：平均 %.3f秒（%.3f〜%.3f）",
+               ratioN, (float)(ratioSum / ratioN), ratioMin, ratioMax);
+  }
+}
+
+// ためておいたログを、1周に1行ずつ出す。回転中は出さない（止める判断を遅らせないため）
+void Gyro_PrintPending(void) {
+  if (Motion_IsTurning()) {
+    return;
+  }
+  if (logCount > 0) {
+    Log_Printf("ジャイロ", "%s", logQueue[logHead]);
+    logHead = (logHead + 1) % GYRO_LOG_QUEUE_COUNT;
+    logCount--;
+    return;
+  }
+  if (logDropped != logDroppedShown) {
+    Log_Printf("ジャイロ", "ためておくログがあふれて %lu行 捨てました（累計 %lu行）",
+               (unsigned long)(logDropped - logDroppedShown), (unsigned long)logDropped);
+    logDroppedShown = logDropped;
   }
 }
 

@@ -310,8 +310,10 @@
 #define GYRO_YAW_SIGN               (+1)
 #define GYRO_YAW_AXIS               2       // 0=X 1=Y 2=Z（車体の上下の軸）
 #define GYRO_READ_INTERVAL_MS       25      // FIFO を読みに行く間隔（120Hz なら1回に約3件）
-#define GYRO_MAX_WORDS_PER_READ     8       // 1回に読む件数の上限（1件 約1ms。たまっていても loop を長く止めないため）。
-                                            // 残りは次の loop で続けて読む
+#define GYRO_READ_INTERVAL_TURN_MS  10      // 【仮】回転中に FIFO を読みに行く間隔（止める判断の遅れを縮める。段2で使う判断のための準備。
+                                            // 段1でも回転中だけこの間隔にして、バスの占有と loop を止める時間への影響を測る）
+#define GYRO_MAX_WORDS_PER_READ     4       // 1回に読む件数の上限（1件 約1ms。たまっていても loop を長く止めないため）。
+                                            // 残りは次の loop で続けて読む。8→4（2026-10-10 段1）。FIFOあふれが出たら 8 に戻す
 #define GYRO_RESET_TIMEOUT_MS       200     // ソフトウェアリセットが終わるのを待つ上限
 #define GYRO_SETTLE_MS              100     // ODR を設定してから FIFO を始めるまで捨てる時間（立ち上がり 30ms＋余裕）
 #define GYRO_FAIL_LIMIT             10      // 読み取りがこの回数続けて失敗したら、読むのをやめる（z キーで再開を試せる）
@@ -328,6 +330,12 @@
 #define GYRO_TURN_REST_MS           150     //        この時間続いたら「止まった」として記録を締める
 #define GYRO_TURN_SETTLE_MAX_MS     1500    // 止めてから、止まるのを待つ上限
 #define GYRO_TURN_LOG_COUNT         8       // t キーで見られる回転の記録の件数（新しい順）
+#define GYRO_JUMP_LOG_COUNT         8       // 【仮】t キーで見られる飛びの記録の件数（新しい順。軸・大きさ・そのときの動き）
+#define GYRO_LOG_QUEUE_COUNT        8       // ジャイロのログをためておく行数（FIFO を読む途中でシリアルに出さないため。あふれたら捨てて数える）
+#define GYRO_LOG_LINE_BYTES         384     // ためておく1行の長さ
+// 止まっている間のゼロ点の観察（測って記録するだけ。ゼロ点は書き換えない。決定 D6）
+#define GYRO_ZERO_WATCH_STILL_MS    3000    // 【仮】車体がこの時間止まっていたら、観察を始める（件数は GYRO_CAL_SAMPLES と同じ）
+#define LOG_SLOW_US                 2000    // シリアルへの1行の出力がこの時間を超えたら「遅い」と数える（loop を止める時間の切り分け）
 // 静止測定（m キー）・モーターの振動の測定（n キー）
 #define GYRO_MEASURE_STATIC_MS      60000   // 静止測定の長さ
 #define GYRO_MEASURE_BASE_SAMPLES   240     // 区間の最初のこの件数で、飛びを数える基準（平均とばらつき）を決める
