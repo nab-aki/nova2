@@ -56,6 +56,8 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
     for (int d = 0; d < DIR_COUNT; d++) {
       measured_[d] = 0;
       noEcho_[d] = 0;
+      mismatch_[d] = 0;
+      readFail_[d] = 0;
       minCm_[d] = 0.0f;
       maxCm_[d] = 0.0f;
       sumCm_[d] = 0.0;
@@ -106,6 +108,46 @@ void DebugScanBehavior::StoreScan(Dir dir, unsigned long nowMs) {
   valid_[dir] = scan_.validCount();
   panDeg_[dir] = Servo_GetAngle(SERVO_PAN);
   tookMs_[dir] = nowMs - stateStartMs_;
+  // 切り分け用：サーボのチャンネルの値を PCA9685 から読み戻し、書いたはずの値と比べる（読むだけ。動きは変えない）
+  bool anyFail = false;
+  bool anyMismatch = false;
+  for (int v = 0; v < 2; v++) {
+    readOk_[dir][v] = Servo_ReadBack(v == 0 ? SERVO_PAN : SERVO_TILT, &written_[dir][v], &readOn_[dir][v], &readOff_[dir][v]);
+    if (!readOk_[dir][v]) {
+      anyFail = true;
+    } else if (!Matches(dir, v)) {
+      anyMismatch = true;
+    }
+  }
+  if (anyFail) {
+    readFail_[dir]++;
+  }
+  if (anyMismatch) {
+    mismatch_[dir]++;
+  }
+}
+
+// 読み戻しが、書いたはずの値（ON＝0・OFF＝パルス幅）と一致しているか
+bool DebugScanBehavior::Matches(Dir dir, int servo) const {
+  return readOn_[dir][servo] == 0 && readOff_[dir][servo] == written_[dir][servo];
+}
+
+// 1方向ぶんの読み戻しの結果を文字にする。一致なら「一致」、違えば書いた値と読んだ値を出す
+void DebugScanBehavior::FormatReadBack(Dir dir, char *out, size_t size) const {
+  static const char *const SERVO_NAMES[2] = {"左右", "上下"};
+  size_t used = 0;
+  out[0] = '\0';
+  for (int v = 0; v < 2 && used < size; v++) {
+    if (!readOk_[dir][v]) {
+      used += snprintf(out + used, size - used, "%s読めず ", SERVO_NAMES[v]);
+    } else if (!Matches(dir, v)) {
+      used += snprintf(out + used, size - used, "%s不一致（書いた %u・読んだ ON %u OFF %u） ", SERVO_NAMES[v],
+                       (unsigned)written_[dir][v], (unsigned)readOn_[dir][v], (unsigned)readOff_[dir][v]);
+    }
+  }
+  if (used == 0) {
+    snprintf(out, size, "一致（%u）", (unsigned)written_[dir][0]);
+  }
 }
 
 void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
@@ -120,6 +162,10 @@ void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
     sumCm_[d] += cm_[d];
     measured_[d]++;
   }
+  char back[DIR_COUNT][96];
+  for (int d = 0; d < DIR_COUNT; d++) {
+    FormatReadBack((Dir)d, back[d], sizeof(back[d]));
+  }
   Log_Printf("見回し試験", "%d/%d 正面 %.1fcm（有効%d/%d）／左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d） "
              "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums",
              iteration_, DEBUG_SCAN_COUNT,
@@ -128,6 +174,7 @@ void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
              cm_[DIR_RIGHT], valid_[DIR_RIGHT], WANDER_SCAN_SAMPLES,
              panDeg_[DIR_FRONT], panDeg_[DIR_LEFT], panDeg_[DIR_RIGHT],
              tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT]);
+  Log_Printf("見回し試験", "   読み戻し 正面：%s／左：%s／右：%s", back[DIR_FRONT], back[DIR_LEFT], back[DIR_RIGHT]);
   inIteration_ = false;
   BeginIteration(nowMs);
 }
@@ -148,6 +195,9 @@ void DebugScanBehavior::PrintSummary(const char *why) {
       Log_Raw("| %s | 0 | %d | - | - | - |", DIR_NAMES[d], noEcho_[d]);
     }
   }
+  Log_Printf("見回し試験", "サーボの読み戻し（測り終えた時点で PCA9685 から読んだ値と、書いた値の比較）：不一致 正面 %d／左 %d／右 %d回、読めず 正面 %d／左 %d／右 %d回",
+             mismatch_[DIR_FRONT], mismatch_[DIR_LEFT], mismatch_[DIR_RIGHT],
+             readFail_[DIR_FRONT], readFail_[DIR_LEFT], readFail_[DIR_RIGHT]);
   Log_Printf("見回し試験", "打ち切りの理由：%s %d／%s %d／%s %d",
              CUT_NAMES[CUT_LIFT], cutByReason_[CUT_LIFT], CUT_NAMES[CUT_NOTICE], cutByReason_[CUT_NOTICE],
              CUT_NAMES[CUT_OTHER], cutByReason_[CUT_OTHER]);

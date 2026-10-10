@@ -63,3 +63,18 @@ void Pca9685_SetPulseWidth(uint8_t channel, uint16_t pulseWidth) {
   pca9685.setChannelPulseWidth(channel, pulseWidth);
   SyncI2cStats();
 }
+
+// 読み戻し。レジスタの番号と並びはライブラリのソース（lib/PCA9685/src/PCA9685.h・PCA9685.cpp）で確認した：
+// LED0_ON_L＝0x06 から、チャンネルごとに4バイト（ON_L・ON_H・OFF_L・OFF_H）。getChannelOnAndOffTime() が
+// レジスタ番号を書いてから4バイトを続けて読む（MODE1 の AI＝オートインクリメントが 1 であることが前提。初期化で 1 にしている）。
+bool Pca9685_ReadOnOff(uint8_t channel, uint16_t *onTime, uint16_t *offTime) {
+  uint32_t failBefore = pca9685.nova_i2c_fail;
+  PCA9685::Time on = 0;
+  PCA9685::Time off = 0;
+  pca9685.getChannelOnAndOffTime(channel, on, off);
+  bool ok = (pca9685.nova_i2c_fail == failBefore);
+  SyncI2cStats();
+  *onTime = (uint16_t)on;
+  *offTime = (uint16_t)off;
+  return ok;
+}

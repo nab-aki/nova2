@@ -47,6 +47,8 @@ class DebugScanBehavior : public Behavior {
 
   void BeginIteration(unsigned long nowMs);
   void StoreScan(Dir dir, unsigned long nowMs);
+  bool Matches(Dir dir, int servo) const;
+  void FormatReadBack(Dir dir, char *out, size_t size) const;
   void FinishIteration(unsigned long nowMs);
   void NoteCut(CutReason reason, unsigned long nowMs);
   void PrintSummary(const char *why);
@@ -66,6 +68,11 @@ class DebugScanBehavior : public Behavior {
   int valid_[DIR_COUNT];
   int panDeg_[DIR_COUNT];           // 測り終えたときの首の角度（指示した値）
   unsigned long tookMs_[DIR_COUNT]; // その方向にかかった時間（首を向ける待ち＋測距）
+  // サーボのチャンネルの読み戻し（測り終えた時点で PCA9685 から読む。[0]＝左右のサーボ、[1]＝上下のサーボ）
+  bool readOk_[DIR_COUNT][2];
+  uint16_t written_[DIR_COUNT][2];  // 書いたはずのパルス幅
+  uint16_t readOn_[DIR_COUNT][2];   // 読んだ ON（0 のはず）
+  uint16_t readOff_[DIR_COUNT][2];  // 読んだ OFF（書いたパルス幅のはず）
 
   // まとめ
   int completed_ = 0;
@@ -74,6 +81,8 @@ class DebugScanBehavior : public Behavior {
   float minCm_[DIR_COUNT];
   float maxCm_[DIR_COUNT];
   double sumCm_[DIR_COUNT];
+  int mismatch_[DIR_COUNT];     // 読み戻しが書いた値と違った回数（左右・上下のどちらか）
+  int readFail_[DIR_COUNT];     // 読み戻しそのものが失敗した回数
   int cutByReason_[CUT_COUNT];
   int cutByState_[STATE_COUNT];
 };
