@@ -104,7 +104,8 @@ void TroubleBehavior::Decide(unsigned long nowMs) {
 
 void TroubleBehavior::StartTurnStep(unsigned long nowMs) {
   ChangeState(STATE_TURN, nowMs);
-  Motion_StartTurn(turnKind_, nowMs);
+  // 角度を指示して回る。止めるのは motion（角度・時間の上限・回っていない。docs/specs/common_gyro_turn.md）
+  Motion_StartTurnDeg(turnKind_, TROUBLE_TURN_STEP_DEG, (unsigned long)TurnTuning_StepMs(turnKind_), nowMs);
 }
 
 void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
@@ -172,10 +173,10 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_TURN:
-      if (nowMs - stateStartMs_ < (unsigned long)TurnTuning_StepMs(turnKind_)) {
+      // motion が止めるのを待つ。どの止まり方でも、1回の回転が終わったものとして測り直しへ進む
+      if (Motion_IsTurning()) {
         return;
       }
-      Motion_StopTurn(nowMs);
       steps_++;
       checkReset_ = false;
       ChangeState(STATE_CHECK, nowMs);

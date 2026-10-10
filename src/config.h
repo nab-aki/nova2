@@ -245,6 +245,8 @@
 // 左右確認（数百ms、モーター出力0）が自然に入るため同じ問題が出ていなかった。
 #define WANDER_RECOVER_PAUSE_MS     500     // 後退→回転の間の「ため」（確定 2026-10-05。通し試験でブラウンアウトなし。
                                             // ジャイロ搭載後に印象が変われば見直す）
+#define WANDER_AVOID_TURN_DEG       30      // 横が近いときの向き変え（その場回転）の角度。時間の上限は ID15 と同じ1ステップの時間
+#define WANDER_RECOVER_TURN_DEG     30      // 後退+その場回転の、回転の角度（同上）
 #define WANDER_AVOID_PIVOT_MS       1200    // 横を避けるための片側旋回の時間（うちキック MOTOR_PIVOT_KICK_MS 300ms。約20°。一旦の決定値）
 #define WANDER_RUN_MIN_MS           1000    // 巡航を保つ時間（ランダムの下限）
 #define WANDER_RUN_MAX_MS           3000    // 同（上限）
@@ -267,6 +269,8 @@
 // 満充電での動作を前提にした値。低電圧時の余裕は未確認（docs/measurements.md 2026-10-04）。
 #define TROUBLE_TURN_STEP_MS        425     // 1回に回る時間（キックなし・保持425msで約30°。
                                             // ID25「横が近いときの向き変え」も同じ値を使う）
+#define TROUBLE_TURN_STEP_DEG       30      // 1回に回る角度（ジャイロの角度で止める。使えないとき・上限は TROUBLE_TURN_STEP_MS。
+                                            // docs/specs/common_gyro_turn.md）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
 #define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数。360° ÷ 30°/ステップ（実測）＝ 12
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間

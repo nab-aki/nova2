@@ -45,12 +45,14 @@ static uint32_t turnStartOverruns = 0;   // 回し始めたときの FIFOあふ�
 static unsigned long stallCheckMs = 0;   // 「回っていない」の区切りの始まり
 static float stallCheckDeg = 0.0f;       // そのときまでに回った角度
 static uint32_t turnEndCounts[TURN_END_COUNT];
+static bool lastTurnAborted = false;      // 直前の「角度を指示した回転」が中断で終わったか
 
 // 角度を指示した回転が、外から止められた（中断）ときに数える
 static void NoteTurnAborted(void) {
   if (turnStopMode != TURN_STOP_NONE) {
     turnEndCounts[TURN_END_ABORT]++;
     turnStopMode = TURN_STOP_NONE;
+    lastTurnAborted = true;
   }
 }
 
@@ -182,6 +184,7 @@ void Motion_StopTurn(unsigned long nowMs) {
 
 void Motion_StartTurnDeg(TurnKind kind, float targetDeg, unsigned long limitMs, unsigned long nowMs) {
   Motion_StartTurn(kind, nowMs);
+  lastTurnAborted = false;
   turnLimitMs = limitMs;
   if (!TurnIsPivot(kind) && Gyro_IsTurnUsable()) {
     turnStopMode = TURN_STOP_ANGLE;
@@ -249,6 +252,10 @@ static void UpdateTurnDeg(unsigned long nowMs) {
     stallCheckMs = nowMs;
     stallCheckDeg = turnedDeg;
   }
+}
+
+bool Motion_LastTurnAborted(void) {
+  return lastTurnAborted;
 }
 
 void Motion_PrintTurnStats(void) {

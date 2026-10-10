@@ -53,6 +53,9 @@ void Motion_StopTurn(unsigned long nowMs);
 // limitMs には、今までの時間ベースの値を渡す（予備と上限を兼ねる）。
 void Motion_StartTurnDeg(TurnKind kind, float targetDeg, unsigned long limitMs, unsigned long nowMs);
 void Motion_PrintTurnStats(void);   // t キー：止め方ごとの回数（起動から）
+// 直前の「角度を指示した回転」が、途中で中断されたか（持ち上げ・非常停止・振る舞いの交代・直進の指示）。
+// 角度に届いた・時間の上限・回っていない・時間ベース・途中でジャイロを失った、は「終わった」として false
+bool Motion_LastTurnAborted(void);
 bool Motion_IsTurning(void);
 // 時刻 nowMs に、直進・停止の指示（Motion_SetSpeed／Motion_Stop）で回転が取り消されたか。
 // 調停は交代時の onStop()・onStart() に同じ nowMs を渡すので、onStart() から

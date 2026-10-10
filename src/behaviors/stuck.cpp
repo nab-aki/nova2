@@ -63,7 +63,7 @@ void StuckBehavior::DecideTurn(unsigned long nowMs) {
     turnDeg_ = (int)random(STUCK_TURN_MIN_DEG, STUCK_TURN_MAX_DEG + 1);
   }
   turnMs_ = (unsigned long)(turnDeg_ * ROTATE_CONT_MS_PER_DEG + 0.5f);
-  Log_Printf("詰まり", "%s。考える %lums →後退 %lums →ため %lums →%sへ %d°（%lums%s）",
+  Log_Printf("詰まり", "%s。考える %lums →後退 %lums →ため %lums →%sへ %d°（時間の上限 %lums%s）",
              basis, (unsigned long)STUCK_THINK_MS, (unsigned long)STUCK_BACK_MS,
              (unsigned long)WANDER_RECOVER_PAUSE_MS, turnLeft ? "左" : "右", turnDeg_, turnMs_,
              repeat_ ? "。くり返し" : "");
@@ -163,15 +163,15 @@ void StuckBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (nowMs - stateStartMs_ < WANDER_RECOVER_PAUSE_MS) {
         return;
       }
-      Motion_StartTurn(turnKind_, nowMs);
+      // 角度を指示して回る。止めるのは motion。turnMs_（時間ベースの値）は予備と上限（docs/specs/common_gyro_turn.md）
+      Motion_StartTurnDeg(turnKind_, (float)turnDeg_, turnMs_, nowMs);
       ChangeState(STATE_TURN, nowMs);
       return;
 
     case STATE_TURN:
-      if (nowMs - stateStartMs_ < turnMs_) {
-        return;
+      if (Motion_IsTurning()) {
+        return;   // motion が止めるのを待つ。どの止まり方でも、回転が終わったものとして締める
       }
-      Motion_StopTurn(nowMs);
       Finish(nowMs);
       return;
   }
