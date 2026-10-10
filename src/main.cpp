@@ -126,10 +126,11 @@ static unsigned long ContTurnMs(void) {
 }
 
 static void PrintKeyHelp(void) {
-  Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %dms）", TurnTuning_StepMs(TURN_ROTATE_LEFT));
+  Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %d°。ジャイロの角度で止める。使えないとき・上限は %dms）",
+             DEBUG_STEP_TURN_DEG, TurnTuning_StepMs(TURN_ROTATE_LEFT));
   Log_Printf("キー", "5:片側旋回 左  6:片側旋回 右（各 %dms）", TurnTuning_StepMs(TURN_PIVOT_LEFT));
   Log_Printf("キー", "いずれも1ステップだけ回します。止まっているときだけ受け付けます。終わるとステップ中の電池の最低値も出します");
-  Log_Printf("キー", "7:連続その場回転 左  8:連続その場回転 右（%d°のつもりで %lums。一時停止中だけ。回った角度を測って ROTATE_CONT_MS_PER_DEG を直す）",
+  Log_Printf("キー", "7:連続その場回転 左  8:連続その場回転 右（%d°。ジャイロの角度で止める。使えないとき・上限は %lums。一時停止中だけ）",
              DEBUG_CONT_TURN_DEG, ContTurnMs());
   Log_Printf("キー", "p か リモコンの ▶:うろうろの一時停止／再開（一時停止中は うろうろ・困る が止まり、3〜6 で落ち着いて測れます）");
   Log_Printf("キー", "  切り替わると目で合図します（一時停止＝目を細める、再開＝ゆっくり閉じて開く）");
@@ -151,7 +152,7 @@ static void PrintKeyHelp(void) {
 }
 
 // 止まっていて、立て直しの最中でも持ち上げ中でもないときだけ受け付ける
-static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
+static void RequestDebugTurn(TurnKind kind, unsigned long durationMs, int targetDeg) {
   if (debugTurnBehavior.isBusy()) {
     Log_Printf("キー", "回転の最中（または予約済み）なので無視します");
     return;
@@ -179,7 +180,7 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs) {
     Log_Printf("キー", "車体が動いているので無視します（止まってから押してください）");
     return;
   }
-  debugTurnBehavior.request(kind, durationMs);
+  debugTurnBehavior.request(kind, durationMs, targetDeg);
 }
 
 // 連続回転（キー 7・8）。一時停止中だけ受け付ける
@@ -188,7 +189,7 @@ static void RequestContTurn(TurnKind kind) {
     Log_Printf("キー", "連続回転は一時停止中（p）にしてから押してください");
     return;
   }
-  RequestDebugTurn(kind, ContTurnMs());
+  RequestDebugTurn(kind, ContTurnMs(), DEBUG_CONT_TURN_DEG);
 }
 
 // ------------------------ デバッグキー（ジャイロの測定）------------------------ //
@@ -330,10 +331,10 @@ static void HandleSerialKeys(void) {
       continue;
     }
     switch (c) {
-      case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT));   break;
-      case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
-      case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT));     break;
-      case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT));   break;
+      case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT), DEBUG_STEP_TURN_DEG);   break;
+      case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT), DEBUG_STEP_TURN_DEG); break;
+      case '5': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_LEFT, TurnTuning_StepMs(TURN_PIVOT_LEFT), 0);     break;
+      case '6': tunePivot = true;  RequestDebugTurn(TURN_PIVOT_RIGHT, TurnTuning_StepMs(TURN_PIVOT_RIGHT), 0);   break;
       case '7': tunePivot = false; RequestContTurn(TURN_ROTATE_LEFT);  break;
       case '8': tunePivot = false; RequestContTurn(TURN_ROTATE_RIGHT); break;
       case 'p': TogglePause("キー p", now); break;
@@ -359,6 +360,7 @@ static void HandleSerialKeys(void) {
         Trace_Print();
         PrintBusStats();
         Gyro_Print();
+        Motion_PrintTurnStats();
         break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;

@@ -540,6 +540,10 @@ bool Gyro_IsCalibrated(void) {
   return calibrated;
 }
 
+bool Gyro_IsTurnUsable(void) {
+  return state == GYRO_RUNNING && calibrated;
+}
+
 float Gyro_YawRateDps(void) {
   return yawRateDps;
 }

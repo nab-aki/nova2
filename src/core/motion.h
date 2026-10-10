@@ -45,6 +45,14 @@ bool Motion_IsStill(void);
 // 直進の目標速度は0に戻す（回転中に Motion_SetSpeed を呼ぶと回転は取り消される）。
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
 void Motion_StopTurn(unsigned long nowMs);
+
+// 角度を指示して回る（docs/specs/common_gyro_turn.md）。止めるのは motion が行う。呼ぶ側は Motion_IsTurning() が false になるのを待つ。
+//   ・ジャイロが使えるとき：回った角度が「targetDeg − GYRO_TURN_COAST_DEG」に届いたら止める。
+//     回っていない（GYRO_TURN_STALL_MS で GYRO_TURN_STALL_DEG 未満）・limitMs がたった・途中でジャイロを失った、でも止める。
+//   ・使えないとき（未補正・失敗・片側旋回）：limitMs で止める（今までの時間ベースと同じ動き）。
+// limitMs には、今までの時間ベースの値を渡す（予備と上限を兼ねる）。
+void Motion_StartTurnDeg(TurnKind kind, float targetDeg, unsigned long limitMs, unsigned long nowMs);
+void Motion_PrintTurnStats(void);   // t キー：止め方ごとの回数（起動から）
 bool Motion_IsTurning(void);
 // 時刻 nowMs に、直進・停止の指示（Motion_SetSpeed／Motion_Stop）で回転が取り消されたか。
 // 調停は交代時の onStop()・onStart() に同じ nowMs を渡すので、onStart() から

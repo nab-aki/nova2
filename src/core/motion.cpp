@@ -22,6 +22,38 @@ static unsigned long turnStartMs = 0;
 static bool turnCanceledValid = false;
 static unsigned long turnCanceledMs = 0;
 
+// 角度を指示した回転（Motion_StartTurnDeg。docs/specs/common_gyro_turn.md）
+enum TurnStopMode {
+  TURN_STOP_NONE,    // 呼ぶ側が Motion_StopTurn() で止める（今までの回転）
+  TURN_STOP_ANGLE,   // ジャイロの角度で止める
+  TURN_STOP_TIME     // ジャイロが使えないので、時間で止める
+};
+enum TurnEnd {
+  TURN_END_ANGLE,     // 角度に届いた
+  TURN_END_LIMIT,     // 時間の上限
+  TURN_END_STALL,     // 回っていない
+  TURN_END_TIME,      // 時間ベースで回した
+  TURN_END_LOST,      // 途中でジャイロを失った
+  TURN_END_ABORT,     // 中断（持ち上げ・非常停止・振る舞いの交代・直進の指示）
+  TURN_END_COUNT
+};
+static TurnStopMode turnStopMode = TURN_STOP_NONE;
+static unsigned long turnLimitMs = 0;
+static float turnStopDeg = 0.0f;         // この角度に届いたら止める（目標 − 惰性の分）
+static float turnStartYawDeg = 0.0f;     // 回し始めたときの向き
+static uint32_t turnStartOverruns = 0;   // 回し始めたときの FIFOあふれの回数
+static unsigned long stallCheckMs = 0;   // 「回っていない」の区切りの始まり
+static float stallCheckDeg = 0.0f;       // そのときまでに回った角度
+static uint32_t turnEndCounts[TURN_END_COUNT];
+
+// 角度を指示した回転が、外から止められた（中断）ときに数える
+static void NoteTurnAborted(void) {
+  if (turnStopMode != TURN_STOP_NONE) {
+    turnEndCounts[TURN_END_ABORT]++;
+    turnStopMode = TURN_STOP_NONE;
+  }
+}
+
 // 直進中の速度の揺らぎ。周期の違う2つの波を重ねて、機械的に見えないようにする
 static float Wobble(unsigned long nowMs, float speed) {
   float magnitude = fabsf(speed);
@@ -80,7 +112,8 @@ static void CancelTurn(unsigned long nowMs, const char *reason) {
   }
   turning = false;
   Motor_Stop();
-  Gyro_OnTurnStop(nowMs);   // 実際に回った角度の記録（測るだけ。動きは変えない）
+  NoteTurnAborted();        // 角度・時間で自分から止めたときは、先に TURN_STOP_NONE にしてある
+  Gyro_OnTurnStop(nowMs);   // 実際に回った角度の記録
   Obstacle_Reset();   // 回っている間の測距は別の方向を見ている
   if (reason != NULL) {
     Log_Printf("動き", "%s %s（合計 %lums）", Motion_TurnName(turnKind), reason, nowMs - turnStartMs);
@@ -115,6 +148,7 @@ void Motion_EmergencyStop(void) {
   turning = false;          // 回転中でも確実に止める（記録は下の1行にまとめる）
   speedSmoother.reset(0.0f);
   Motor_Stop();
+  NoteTurnAborted();
   if (wasTurning) {
     Gyro_OnTurnStop(millis());   // 実際に回った角度の記録（測るだけ）
   }
@@ -122,6 +156,7 @@ void Motion_EmergencyStop(void) {
 }
 
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
+  NoteTurnAborted();           // 前の回転が残っていたら中断として数え、止め方を「呼ぶ側が止める」に戻す
   speedSmoother.reset(0.0f);   // 直進の目標は捨てる
   turning = true;
   turnKind = kind;
@@ -141,6 +176,93 @@ void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
 
 void Motion_StopTurn(unsigned long nowMs) {
   CancelTurn(nowMs, "停止");
+}
+
+// ------------------------ 角度を指示した回転 ------------------------ //
+
+void Motion_StartTurnDeg(TurnKind kind, float targetDeg, unsigned long limitMs, unsigned long nowMs) {
+  Motion_StartTurn(kind, nowMs);
+  turnLimitMs = limitMs;
+  if (!TurnIsPivot(kind) && Gyro_IsTurnUsable()) {
+    turnStopMode = TURN_STOP_ANGLE;
+    turnStopDeg = max(targetDeg - GYRO_TURN_COAST_DEG, 0.0f);
+    turnStartYawDeg = Gyro_YawDeg();
+    turnStartOverruns = Gyro_GetCounters().overruns;
+    stallCheckMs = nowMs;
+    stallCheckDeg = 0.0f;
+    Log_Printf("動き", "%s %.0f°：ジャイロの角度で止めます（%.0f°で止める。時間の上限 %lums）",
+               Motion_TurnName(kind), targetDeg, turnStopDeg, limitMs);
+  } else {
+    turnStopMode = TURN_STOP_TIME;
+    Log_Printf("動き", "%s %.0f°：時間ベースで回します（%lums。ジャイロ：%s）",
+               Motion_TurnName(kind), targetDeg, limitMs, TurnIsPivot(kind) ? "片側旋回には使わない" : Gyro_StateName());
+  }
+}
+
+// 角度・時間で自分から止める。止め方を数え、理由を1行出す
+static void EndTurnDeg(TurnEnd end, const char *reason, unsigned long nowMs) {
+  turnEndCounts[end]++;
+  turnStopMode = TURN_STOP_NONE;   // CancelTurn が「中断」として数えないように、先に戻す
+  CancelTurn(nowMs, reason);
+}
+
+// 回し始めてから回った角度（指示した向きを正とする）
+static float TurnedDeg(void) {
+  float delta = Gyro_YawDeg() - turnStartYawDeg;
+  return (turnKind == TURN_ROTATE_LEFT) ? delta : -delta;
+}
+
+static void UpdateTurnDeg(unsigned long nowMs) {
+  unsigned long elapsedMs = nowMs - turnStartMs;
+  char reason[96];
+  if (turnStopMode == TURN_STOP_TIME) {
+    if (elapsedMs >= turnLimitMs) {
+      EndTurnDeg(TURN_END_TIME, "停止（時間ベース）", nowMs);
+    }
+    return;
+  }
+  // 途中でジャイロを失ったら、その場で止める（回り足りない側に倒す）
+  if (!Gyro_IsTurnUsable() || Gyro_GetCounters().overruns != turnStartOverruns) {
+    snprintf(reason, sizeof(reason), "停止（途中でジャイロを失った。ジャイロ：%s）", Gyro_StateName());
+    EndTurnDeg(TURN_END_LOST, reason, nowMs);
+    return;
+  }
+  float turnedDeg = TurnedDeg();
+  if (turnedDeg >= turnStopDeg) {
+    snprintf(reason, sizeof(reason), "停止（角度に届いた：%.1f°）", turnedDeg);
+    EndTurnDeg(TURN_END_ANGLE, reason, nowMs);
+    return;
+  }
+  if (elapsedMs >= turnLimitMs) {
+    snprintf(reason, sizeof(reason), "停止（時間の上限。%.1f°で、%.0f°に届かなかった）", turnedDeg, turnStopDeg);
+    EndTurnDeg(TURN_END_LIMIT, reason, nowMs);
+    return;
+  }
+  // 回っていない：GYRO_TURN_STALL_MS ごとに区切り、その間に進んだ角度が小さければ止める
+  if (nowMs - stallCheckMs >= GYRO_TURN_STALL_MS) {
+    float advancedDeg = turnedDeg - stallCheckDeg;
+    if (advancedDeg < GYRO_TURN_STALL_DEG) {
+      snprintf(reason, sizeof(reason), "停止（回っていない：%dms で %.1f°）", GYRO_TURN_STALL_MS, advancedDeg);
+      EndTurnDeg(TURN_END_STALL, reason, nowMs);
+      return;
+    }
+    stallCheckMs = nowMs;
+    stallCheckDeg = turnedDeg;
+  }
+}
+
+void Motion_PrintTurnStats(void) {
+  char now[64];
+  if (Gyro_IsTurnUsable()) {
+    snprintf(now, sizeof(now), "ジャイロの角度で止める");
+  } else {
+    snprintf(now, sizeof(now), "時間ベース（ジャイロ：%s）", Gyro_StateName());
+  }
+  Log_Printf("動き", "回転の止め方（起動から。角度を指示した回転だけ）：角度 %lu／時間の上限 %lu／回っていない %lu／時間ベース %lu／"
+             "途中で失った %lu／中断 %lu（いま回せば：%s）",
+             (unsigned long)turnEndCounts[TURN_END_ANGLE], (unsigned long)turnEndCounts[TURN_END_LIMIT],
+             (unsigned long)turnEndCounts[TURN_END_STALL], (unsigned long)turnEndCounts[TURN_END_TIME],
+             (unsigned long)turnEndCounts[TURN_END_LOST], (unsigned long)turnEndCounts[TURN_END_ABORT], now);
 }
 
 bool Motion_IsTurning(void) {
@@ -173,6 +295,9 @@ void Motion_Update(unsigned long nowMs) {
       turnKicking = false;
       ApplyTurn(turnKind, TurnHoldPwm(turnKind));
       Log_Printf("動き", "%s 保持 PWM%d", Motion_TurnName(turnKind), TurnHoldPwm(turnKind));
+    }
+    if (turnStopMode != TURN_STOP_NONE) {
+      UpdateTurnDeg(nowMs);   // 角度を指示した回転は、ここで止める判断をする
     }
     return;
   }

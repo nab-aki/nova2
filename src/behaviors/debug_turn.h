@@ -21,8 +21,10 @@ class DebugTurnBehavior : public Behavior {
   void onUpdate(const SensorData &sensors, unsigned long nowMs) override;
   void onStop(unsigned long nowMs) override;
 
-  // 1ステップ分を予約する。次の調停で実行される
-  void request(TurnKind kind, unsigned long durationMs);
+  // 1ステップ分を予約する。次の調停で実行される。
+  // targetDeg が 0 より大きければ、角度を指示して回る（止めるのは motion。durationMs は時間ベースの値＝予備と上限）。
+  // 0 なら、今までどおり durationMs だけ回す（片側旋回）
+  void request(TurnKind kind, unsigned long durationMs, int targetDeg);
 
   // 予約済み、または実行中か。この間の新しいキーは受け付けない
   bool isBusy() const { return requested_ || running_; }
@@ -36,6 +38,7 @@ class DebugTurnBehavior : public Behavior {
   bool running_ = false;
   TurnKind kind_ = TURN_ROTATE_LEFT;
   unsigned long durationMs_ = 0;
+  int targetDeg_ = 0;
   unsigned long startMs_ = 0;
 
   // 1ステップの間の電池電圧（ADCを毎ループ読む。状態行の500ms間隔では、短いステップの底を逃すため）

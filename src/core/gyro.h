@@ -57,6 +57,7 @@ GyroState Gyro_GetState(void);
 const char *Gyro_StateName(void);
 bool Gyro_IsReading(void);       // 角速度を読めている状態か（補正待ち・補正中・測定中）
 bool Gyro_IsCalibrated(void);    // ゼロ点補正が1回でも終わっているか
+bool Gyro_IsTurnUsable(void);    // 回転を角度で止めるのに使えるか（測定中で、ゼロ点が補正済み）
 
 float Gyro_YawRateDps(void);     // 直近の、車体の回る速さ
 float Gyro_YawDeg(void);         // 積算した向き（起動から。正＝反時計回り。未補正の間はずれが大きい）

@@ -6,9 +6,10 @@
 #include "../hal/hal_battery.h"
 #include "../hal/hal_log.h"
 
-void DebugTurnBehavior::request(TurnKind kind, unsigned long durationMs) {
+void DebugTurnBehavior::request(TurnKind kind, unsigned long durationMs, int targetDeg) {
   kind_ = kind;
   durationMs_ = durationMs;
+  targetDeg_ = targetDeg;
   requested_ = true;
 }
 
@@ -49,9 +50,13 @@ void DebugTurnBehavior::begin(unsigned long nowMs) {
                "（%.0fcm 未満の非常停止と、持ち上げでは止まります）",
                Obstacle_LastCm(), OBSTACLE_EMERGENCY_CM);
   }
-  Log_Printf("デバッグ", "%s を %lums。回った角度を測ってください",
-             Motion_TurnName(kind_), durationMs_);
-  Motion_StartTurn(kind_, nowMs);
+  if (targetDeg_ > 0) {
+    Motion_StartTurnDeg(kind_, (float)targetDeg_, durationMs_, nowMs);   // 止めるのは motion（角度・時間の上限・回っていない）
+  } else {
+    Log_Printf("デバッグ", "%s を %lums。回った角度を測ってください",
+               Motion_TurnName(kind_), durationMs_);
+    Motion_StartTurn(kind_, nowMs);
+  }
 }
 
 void DebugTurnBehavior::onStart(unsigned long nowMs) {
@@ -78,7 +83,9 @@ void DebugTurnBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
     return;
   }
   sampleBattery(nowMs);
-  if (nowMs - startMs_ >= durationMs_) {
+  // 角度を指示した回転は motion が止めるので、止まるのを待つ。時間だけの回転は、ここで止める
+  bool done = (targetDeg_ > 0) ? !Motion_IsTurning() : (nowMs - startMs_ >= durationMs_);
+  if (done) {
     Motion_StopTurn(nowMs);
     running_ = false;
     Safety_SetDebugTurnActive(false);
