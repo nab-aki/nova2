@@ -18,6 +18,7 @@
 
 #include "behaviors/blink.h"
 #include "behaviors/debug_gyro_spin.h"
+#include "behaviors/debug_scan.h"
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
 #include "behaviors/pause_cue.h"
@@ -50,6 +51,7 @@ static WanderBehavior wanderBehavior;
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
 static DebugGyroSpinBehavior debugGyroSpinBehavior;
+static DebugScanBehavior debugScanBehavior;
 static PauseCueBehavior pauseCueBehavior;
 static StuckBehavior stuckBehavior;
 static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
@@ -138,6 +140,8 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "ジャイロ：j:いまの値と設定  z:ゼロ点補正のやり直し（止まっているときだけ）  3・4・7・8 で回ると、止まったあとに回った角度が出ます");
   Log_Printf("キー", "  m:静止測定 %d秒（一時停止中・床に置いて触らない）  n:モーターの振動の測定 約%d秒（一時停止中・車輪を浮かせ、前を30cm以上あける。どのキーでも中断）",
              GYRO_MEASURE_STATIC_MS / 1000, (3 * GYRO_SPIN_SEGMENT_MS + GYRO_SPIN_RAMP_MS + GYRO_SPIN_GAP_MS) / 1000);
+  Log_Printf("キー", "o:見回しの試験（一時停止中だけ。車体は動かさず、うろうろと同じ見回しを%d回くり返して、まとめを出す。どのキーでも中断）",
+             DEBUG_SCAN_COUNT);
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -190,6 +194,24 @@ static void RequestContTurn(TurnKind kind) {
     return;
   }
   RequestDebugTurn(kind, ContTurnMs(), DEBUG_CONT_TURN_DEG);
+}
+
+// o：見回しの試験。一時停止中で、車体が止まっているときだけ受け付ける
+static void RequestDebugScan(void) {
+  if (!Pause_IsPaused()) {
+    Log_Printf("キー", "見回しの試験は一時停止中（p）にしてから押してください");
+    return;
+  }
+  if (debugTurnBehavior.isBusy() || debugGyroSpinBehavior.isBusy() || GyroMeasure_IsStaticRunning() || !Motion_IsStill()) {
+    Log_Printf("キー", "ほかの測定の最中か、車体が動いているので無視します（止まってから押してください）");
+    return;
+  }
+  if (Safety_IsLifted()) {
+    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                  : "持ち上げられているので無視します（床に置いてから押してください）");
+    return;
+  }
+  debugScanBehavior.request();
 }
 
 // ------------------------ デバッグキー（ジャイロの測定）------------------------ //
@@ -330,6 +352,13 @@ static void HandleSerialKeys(void) {
       debugGyroSpinBehavior.abort(reason, now);
       continue;
     }
+    // 見回しの試験（o）の最中も、どのキーでも中断する
+    if (debugScanBehavior.isBusy()) {
+      char reason[32];
+      snprintf(reason, sizeof(reason), "キー '%c'", c);
+      debugScanBehavior.abort(reason);
+      continue;
+    }
     switch (c) {
       case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT), DEBUG_STEP_TURN_DEG);   break;
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT), DEBUG_STEP_TURN_DEG); break;
@@ -367,6 +396,7 @@ static void HandleSerialKeys(void) {
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
       case 'n': RequestGyroSpin(); break;
+      case 'o': RequestDebugScan(); break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;
@@ -416,6 +446,7 @@ void setup() {
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
   Arbiter_Register(&debugGyroSpinBehavior);
+  Arbiter_Register(&debugScanBehavior);
   Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&stuckBehavior);
   Arbiter_Register(&noticeBehavior);
@@ -439,6 +470,8 @@ void loop() {
   if (Ir_Poll(&irCode) && irCode == IR_BUTTON_PAUSE) {   // 受信したボタンは hal_ir が1行出す
     if (debugGyroSpinBehavior.isBusy()) {
       debugGyroSpinBehavior.abort("リモコン ▶", now);   // 測定（n）の最中は、一時停止を切り替えずに中断だけする
+    } else if (debugScanBehavior.isBusy()) {
+      debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o）も同じ
     } else {
       TogglePause("リモコン ▶", now);
     }

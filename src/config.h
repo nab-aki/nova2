@@ -307,6 +307,7 @@
 #define ROTATE_CONT_MS_PER_DEG      13.0f
 #define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 #define DEBUG_STEP_TURN_DEG         30      // キー 3・4 で回る角度
+#define DEBUG_SCAN_COUNT            20      // キー o：止まったまま見回しをくり返す回数（behaviors/debug_scan.*。優先度はうろうろと同じ PRIORITY_WANDER）
 // ジャイロの角度で止めるその場回転（docs/specs/common_gyro_turn.md。緩い版：厳密には制御せず、安全の枠だけを守る）
 #define GYRO_TURN_COAST_DEG         10.0f   // 目標の角度からこの分を引いた角度で止める（止めたあとの惰性。実測 6.2〜13.1°。固定で、調整しない。確定 2026-10-10）
 #define GYRO_TURN_STALL_MS          300     // 「回っていない」を見る区切り（回り始めの実測は 20〜70ms。確定 2026-10-10）
