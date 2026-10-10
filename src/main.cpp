@@ -31,7 +31,6 @@
 #include "core/eyes.h"
 #include "core/gyro.h"
 #include "core/gyro_measure.h"
-#include "core/loop_stats.h"
 #include "core/motion.h"
 #include "core/neck.h"
 #include "core/obstacle.h"
@@ -330,7 +329,6 @@ static void HandleSerialKeys(void) {
       debugGyroSpinBehavior.abort(reason, now);
       continue;
     }
-    LoopStats_SkipThisLoop();   // キー操作の表示で長くなる周は、loop の時間の記録に入れない
     switch (c) {
       case '3': tunePivot = false; RequestDebugTurn(TURN_ROTATE_LEFT, TurnTuning_StepMs(TURN_ROTATE_LEFT));   break;
       case '4': tunePivot = false; RequestDebugTurn(TURN_ROTATE_RIGHT, TurnTuning_StepMs(TURN_ROTATE_RIGHT)); break;
@@ -361,7 +359,6 @@ static void HandleSerialKeys(void) {
         Trace_Print();
         PrintBusStats();
         Gyro_Print();
-        LoopStats_Print();
         break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;
@@ -432,7 +429,6 @@ void setup() {
 }
 
 void loop() {
-  LoopStats_Begin();   // loop 1周の時間と、区間ごとの時間を測る（測るだけ。docs/specs/common_gyro_turn.md 段1）
   unsigned long now = millis();
 
   HandleSerialKeys();
@@ -446,30 +442,21 @@ void loop() {
   }
   Buzzer_Update(now);
   Sensors_Update(now);
-  LoopStats_Mark(LOOP_SEC_SENSORS);
   Gyro_Update(now);          // ジャイロの FIFO を読んで向きを積算する（測るだけ。動きには使わない）
   GyroMeasure_Update(now);
-  LoopStats_Mark(LOOP_SEC_GYRO);
   Neck_Update(now);
   Obstacle_Update(Sensors_Get(), now);
-  LoopStats_Mark(LOOP_SEC_NECK);
 
   Arbiter_Update(Sensors_Get(), now);   // 振る舞いが車体・目・首を動かす
-  LoopStats_Mark(LOOP_SEC_BEHAVIOR);
   Safety_Update(Sensors_Get(), now);    // 安全層が最後に上書きする
-  LoopStats_Mark(LOOP_SEC_SAFETY);
 
   Eyes_Update(now);
   Motion_Update(now);
   Trace_Update(now);       // 足あとに「ここまで生きていた」と、いまのモーターの出力を刻む
   TestStats_Update(now);   // 止まっているときだけ、試験の集計をフラッシュへ保存する
-  LoopStats_Mark(LOOP_SEC_BODY);
 
-  // 出力は最後にまとめる。回転中は出さない（シリアルの待ちで止める判断が遅れないように。回転が終わってから出す）
-  Gyro_PrintPending();     // FIFO を読む途中で出したいログを、1周に1行ずつ出す
-  if (now - lastStatusMs >= STATUS_PRINT_INTERVAL_MS && !Motion_IsTurning()) {
+  if (now - lastStatusMs >= STATUS_PRINT_INTERVAL_MS) {
     lastStatusMs = now;
     PrintStatus(now);
   }
-  LoopStats_Mark(LOOP_SEC_LOG);
 }

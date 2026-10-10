@@ -2,7 +2,6 @@
 
 #include "../config.h"
 #include "../hal/hal_log.h"
-#include "loop_stats.h"
 #include "motion.h"
 
 static GyroStats *target = NULL;
@@ -62,7 +61,6 @@ void GyroMeasure_End(void) {
 }
 
 void GyroMeasure_Report(const GyroStats &st, const char *title, bool header) {
-  LoopStats_SkipThisLoop();   // 結果の表を出す周は、loop の時間の記録に入れない
   static const char *const AXIS[3] = {"X", "Y", "Z"};
   if (st.count < 2) {
     Log_Printf("測定", "%s：データがありません（%lu件）", title, (unsigned long)st.count);

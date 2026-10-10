@@ -50,7 +50,7 @@ struct GyroCounters {
 
 void Gyro_Setup(unsigned long nowMs);
 
-// loop() から毎回呼ぶ。初期化を1段ずつ進め、GYRO_READ_INTERVAL_MS（回転中は GYRO_READ_INTERVAL_TURN_MS）ごとに FIFO を読む
+// loop() から毎回呼ぶ。初期化を1段ずつ進め、GYRO_READ_INTERVAL_MS ごとに FIFO を読む
 void Gyro_Update(unsigned long nowMs);
 
 GyroState Gyro_GetState(void);
@@ -77,10 +77,6 @@ void Gyro_SetTurnRecording(bool enabled);
 // 1件読むたびに呼ばれる関数を登録する（core/gyro_measure.* が使う。NULL で解除）
 typedef void (*GyroSampleListener)(const GyroSample &sample);
 void Gyro_SetListener(GyroSampleListener listener);
-
-// FIFO を読む途中で出したいログは、ためておいて、ここで1周に1行ずつ出す（loop の最後に呼ぶ）。
-// 回転中は出さない（止める判断を遅らせないため）
-void Gyro_PrintPending(void);
 
 void Gyro_Print(void);           // t キー：状態・設定・ゼロ点・累計・回転の記録
 void Gyro_PrintNow(void);        // j キー：いまの値
