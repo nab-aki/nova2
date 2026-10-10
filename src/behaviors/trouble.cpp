@@ -2,6 +2,7 @@
 
 #include "../config.h"
 #include "../core/debug_pause.h"
+#include "../core/gyro.h"
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
@@ -26,6 +27,56 @@ void TroubleBehavior::ChangeState(State next, unsigned long nowMs) {
   state_ = next;
   stateStartMs_ = nowMs;
   Trace_Mark(name(), StateName(next), nowMs);   // 足あと（再起動しても残る）
+}
+
+// ------------------------ 経過の記録（原因調べ用。動きは変えない）------------------------ //
+
+void TroubleBehavior::LogBegin(unsigned long nowMs) {
+  LogFinish(LOG_ABORTED);   // 前の記録が締まっていなければ、中断として締める
+  logNow_ = &logs_[logHead_];
+  logHead_ = (logHead_ + 1) % TROUBLE_LOG_COUNT;
+  if (logCount_ < TROUBLE_LOG_COUNT) {
+    logCount_++;
+  }
+  memset(logNow_, 0, sizeof(*logNow_));
+  logNow_->startMs = nowMs;
+  logNow_->end = LOG_RUNNING;
+}
+
+void TroubleBehavior::LogFinish(LogEnd end) {
+  if (logNow_ != nullptr && logNow_->end == LOG_RUNNING) {
+    logNow_->end = (uint8_t)end;   // 回転の回数は、測り直しのたびに書いてある
+  }
+}
+
+void TroubleBehavior::printLog() const {
+  if (logCount_ == 0) {
+    Log_Printf("困る", "経過の記録：まだありません");
+    return;
+  }
+  Log_Printf("困る", "経過の記録（直近%d回。新しい順。「空いた」＝最も近い値が %.0fcm 以上 かつ 共通部品が「なし」。○＝満たした ×＝満たさない）：",
+             logCount_, TROUBLE_CLEAR_CM);
+  for (int i = 0; i < logCount_; i++) {
+    const SeqLog &q = logs_[(logHead_ - 1 - i + 2 * TROUBLE_LOG_COUNT) % TROUBLE_LOG_COUNT];
+    const char *end = (q.end == LOG_CLEARED) ? "空いた" : (q.end == LOG_GIVEUP) ? "あきらめ"
+                    : (q.end == LOG_ABORTED) ? "中断" : "進行中";
+    if (q.scanned) {
+      Log_Printf("困る", "%d) %lums 開始：左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d）→ %sへ。終わり：%s（回転%d回）",
+                 i + 1, q.startMs, q.leftCm, q.leftValid, WANDER_SCAN_SAMPLES, q.rightCm, q.rightValid, WANDER_SCAN_SAMPLES,
+                 q.turnLeft ? "左" : "右", end, q.steps);
+    } else {
+      Log_Printf("困る", "%d) %lums 開始：見回しの前に終わった。終わり：%s", i + 1, q.startMs, end);
+    }
+    int shown = (q.steps < TROUBLE_MAX_STEPS) ? q.steps : TROUBLE_MAX_STEPS;
+    for (int k = 0; k < shown; k++) {
+      const StepLog &t = q.step[k];
+      Log_Printf("困る", "   回転%d：最も近い値 %.1fcm %s（有効%d回%s）／共通部品 %s %s（近い %d/%d）／向き %+.1f°（測っている間に %+.1f°）",
+                 k + 1, t.closestCm, t.closestCm >= TROUBLE_CLEAR_CM ? "○" : "×", t.validCount,
+                 t.validCount == 0 ? "＝測れた値なし" : "",
+                 t.blocked ? "あり" : "なし", t.blocked ? "×" : "○", t.nearCount, OBSTACLE_HISTORY,
+                 t.yawDeg, t.yawMovedDeg);
+    }
+  }
 }
 
 // ID9 の反応が終わっても塞がったままなら引き継ぐ。いちど始めたら、
@@ -53,6 +104,7 @@ void TroubleBehavior::StartSequence(unsigned long nowMs) {
   stateStartMs_ = nowMs;
   Trace_Mark(name(), StateName(STATE_BACK), nowMs);   // ChangeState を通らないので、ここで足あとに残す
   Log_Printf("困る", "正面が塞がったまま（%.1fcm）。立て直します", backStartCm_);
+  LogBegin(nowMs);
   TestStats_RecordTroubleStart();
   Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);
 }
@@ -63,6 +115,7 @@ void TroubleBehavior::onStart(unsigned long nowMs) {
 }
 
 void TroubleBehavior::onStop(unsigned long nowMs) {
+  LogFinish(LOG_ABORTED);   // 空いた・あきらめで締めたあとなら、何もしない
   active_ = false;
   Motion_StopTurn(nowMs);
   Motion_Stop(nowMs);
@@ -113,6 +166,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
   if (Safety_IsLifted()) {
     if (!lifted_) {
       lifted_ = true;
+      LogFinish(LOG_ABORTED);
       Log_Printf("困る", "持ち上げられました。床に戻ったら後退からやり直します");
     }
     return;
@@ -168,6 +222,14 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       Log_Printf("困る", "左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d）",
                  leftCm_, leftValid_, WANDER_SCAN_SAMPLES, rightCm_, rightValid_, WANDER_SCAN_SAMPLES);
       Decide(nowMs);
+      if (logNow_ != nullptr) {
+        logNow_->scanned = true;
+        logNow_->leftCm = leftCm_;
+        logNow_->rightCm = rightCm_;
+        logNow_->leftValid = (uint8_t)leftValid_;
+        logNow_->rightValid = (uint8_t)rightValid_;
+        logNow_->turnLeft = (turnKind_ == TURN_ROTATE_LEFT);
+      }
       Neck_Release(NECK_OWNER_RANGE);   // 回る間は安全層が首を正面に固定する
       StartTurnStep(nowMs);
       return;
@@ -192,6 +254,7 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         checkResetMs_ = nowMs;
         checkClosestCm_ = ULTRASONIC_MAX_CM;
         checkValidCount_ = 0;
+        checkYawStartDeg_ = Gyro_YawDeg();   // 記録用：測り直しの間に向きが動いたかを見る
         Obstacle_Reset();
         return;
       }
@@ -206,18 +269,33 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (!Obstacle_IsReady()) {
         return;   // 5回たまるまで判定しない
       }
+      // 経過の記録（判定に使った値を、そのまま残す）
+      if (logNow_ != nullptr && steps_ >= 1 && steps_ <= TROUBLE_MAX_STEPS) {
+        StepLog &t = logNow_->step[steps_ - 1];
+        t.closestCm = checkClosestCm_;
+        t.validCount = (uint8_t)checkValidCount_;
+        t.nearCount = (uint8_t)Obstacle_NearCount();
+        t.blocked = Obstacle_IsBlocked();
+        t.yawDeg = Gyro_YawDeg();
+        t.yawMovedDeg = t.yawDeg - checkYawStartDeg_;
+        logNow_->steps = (uint8_t)steps_;
+      }
       // 「空いた」＝ 自分の基準（最も近い値が TROUBLE_CLEAR_CM 以上）と
       //   共通部品の判定（あり→なしに戻った）の両方（docs/specs/15_trouble.md）
       if (checkClosestCm_ >= TROUBLE_CLEAR_CM && !Obstacle_IsBlocked()) {
         Log_Printf("困る", "正面が空いた（%.1fcm、回転%d回）。うろうろに戻ります", checkClosestCm_, steps_);
+        LogFinish(LOG_CLEARED);
         TestStats_RecordTroubleCleared();
         active_ = false;   // 優先度が0になり、調停が ID25 に戻す
         return;
       }
-      Log_Printf("困る", "%d回目の回転のあと 正面 %.1fcm（まだ塞がっている）", steps_, checkClosestCm_);
+      Log_Printf("困る", "%d回目の回転のあと 正面 %.1fcm（まだ塞がっている：最も近い値が %.0fcm %s／共通部品は「%s」。有効%d回）",
+                 steps_, checkClosestCm_, TROUBLE_CLEAR_CM, checkClosestCm_ >= TROUBLE_CLEAR_CM ? "以上 ○" : "未満 ×",
+                 Obstacle_IsBlocked() ? "あり ×" : "なし ○", checkValidCount_);
       if (steps_ >= TROUBLE_MAX_STEPS) {
         Log_Printf("困る", "%d回まわっても空きません。%lums 休みます",
                    steps_, (unsigned long)TROUBLE_GIVEUP_REST_MS);
+        LogFinish(LOG_GIVEUP);
         TestStats_RecordTroubleGiveup();
         ChangeState(STATE_REST, nowMs);
         return;

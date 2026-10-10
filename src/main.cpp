@@ -361,6 +361,7 @@ static void HandleSerialKeys(void) {
         PrintBusStats();
         Gyro_Print();
         Motion_PrintTurnStats();
+        troubleBehavior.printLog();
         break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;

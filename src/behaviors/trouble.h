@@ -11,6 +11,7 @@
 #ifndef NOVA_BEHAVIORS_TROUBLE_H
 #define NOVA_BEHAVIORS_TROUBLE_H
 
+#include "../config.h"
 #include "../core/behavior.h"
 #include "../core/motion.h"
 #include "../core/scan.h"
@@ -29,6 +30,10 @@ class TroubleBehavior : public Behavior {
 
   // 立て直しの最中か（デバッグキーを受け付けてよいかの判断に使う）
   bool isBusy() const { return active_; }
+
+  // t キー：直近 TROUBLE_LOG_COUNT 回の立て直しの経過（見回し・回転ごとの測り直し・終わり方）。
+  // 記録するだけで、動きは変えない。RAM だけに持つ（電源を切ると消える）
+  void printLog() const;
 
  private:
   enum State {
@@ -69,6 +74,37 @@ class TroubleBehavior : public Behavior {
   int checkValidCount_ = 0;
 
   bool lifted_ = false;
+
+  // ------------------------ 経過の記録（原因調べ用）------------------------ //
+  enum LogEnd { LOG_RUNNING, LOG_CLEARED, LOG_GIVEUP, LOG_ABORTED };
+  struct StepLog {
+    float closestCm;      // 測り直しで得た最も近い有効値（1回も測れなければ ULTRASONIC_MAX_CM のまま）
+    uint8_t validCount;   // 有効な測距の数
+    uint8_t nearCount;    // 共通部品の履歴のうち「近い」の数
+    bool blocked;         // 共通部品の判定（あり＝true）
+    float yawDeg;         // 判定したときのジャイロの向き（積算の角度）
+    float yawMovedDeg;    // 測り直しの間（履歴を捨ててから判定まで）に動いた向き。0 に近ければ、止まって測れている
+  };
+  struct SeqLog {
+    unsigned long startMs;
+    bool scanned;         // 左右の見回しまで進んだか
+    float leftCm;
+    float rightCm;
+    uint8_t leftValid;
+    uint8_t rightValid;
+    bool turnLeft;
+    uint8_t steps;        // 回転の回数
+    uint8_t end;          // LogEnd
+    StepLog step[TROUBLE_MAX_STEPS];
+  };
+  void LogBegin(unsigned long nowMs);
+  void LogFinish(LogEnd end);
+
+  SeqLog logs_[TROUBLE_LOG_COUNT];
+  int logHead_ = 0;             // 次に書く位置
+  int logCount_ = 0;
+  SeqLog *logNow_ = nullptr;    // いま書いている記録
+  float checkYawStartDeg_ = 0.0f;
 };
 
 #endif // NOVA_BEHAVIORS_TROUBLE_H

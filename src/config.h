@@ -274,6 +274,7 @@
                                             // docs/specs/common_gyro_turn.md）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
 #define TROUBLE_MAX_STEPS           12      // 「一周した」とみなす回転の回数。360° ÷ 30°/ステップ（実測）＝ 12
+#define TROUBLE_LOG_COUNT           3       // t キーで見られる、立て直しの経過の記録の回数（RAM だけ。原因調べ用。docs/specs/15_trouble.md）
 #define TROUBLE_GIVEUP_REST_MS      5000    // 一周しても空かないときに休む時間
 
 // ------------------------ ID26 詰まり脱出 ------------------------ //
