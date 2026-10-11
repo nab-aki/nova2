@@ -1,6 +1,10 @@
-// デバッグ：止まったまま見回しをくり返す（#0。docs/notes.md 2章。キー o）
+// デバッグ：止まったまま見回しをくり返す（#0。docs/notes.md 2章。キー o・i）
 // うろうろ（ID25）と同じ見回し（ため → 正面 → 左 → 右 → 正面へ戻す → 測距の履歴がたまるのを待つ）を、
 // 同じ部品（NeckScan）・同じ回数・同じ待ち時間で DEBUG_SCAN_COUNT 回くり返す。車体は動かさない。
+// キー i は、左右の順番だけを逆にした版（正面 → 右 → 左）。首が動かない回が、向きによるのか順番によるのかを見る。
+//
+// 左右へ向ける指示の直後 DEBUG_SCAN_GYRO_WINDOW_MS の間の、ジャイロ（車体の回る速さ）の最大の絶対値も出す。
+// 首が振れると車体がわずかに反動で揺れるので、首が実際に動いたかの目安になる。
 //
 // 目的：首が毎回左右に動くか、3方向の測距がばらつかないか、見回しが途中で打ち切られるかを、
 // ケーブルをつないだまま確かめる。ID16「見回し探索」の土台にもする。
@@ -23,8 +27,9 @@ class DebugScanBehavior : public Behavior {
   void onUpdate(const SensorData &sensors, unsigned long nowMs) override;
   void onStop(unsigned long nowMs) override;
 
-  // 試験を予約する。次の調停で始まる（受け付けてよいかは main.cpp が見る）
-  void request();
+  // 試験を予約する。次の調停で始まる（受け付けてよいかは main.cpp が見る）。
+  // rightFirst が true なら「正面 → 右 → 左」の順（キー i）、false なら「正面 → 左 → 右」（キー o）
+  void request(bool rightFirst);
 
   // 予約済み、または実行中か
   bool isBusy() const { return busy_; }
@@ -46,6 +51,8 @@ class DebugScanBehavior : public Behavior {
   enum CutReason { CUT_LIFT, CUT_NOTICE, CUT_OTHER, CUT_COUNT };
 
   void BeginIteration(unsigned long nowMs);
+  void BeginSide(Dir dir, unsigned long nowMs);
+  void Finish(void);
   void StoreScan(Dir dir, unsigned long nowMs);
   bool Matches(Dir dir, int servo) const;
   void FormatReadBack(Dir dir, char *out, size_t size) const;
@@ -58,6 +65,7 @@ class DebugScanBehavior : public Behavior {
   bool fresh_ = false;          // 予約直後（集計をやり直す）
   bool inIteration_ = false;    // 1回の見回しの途中か
   bool lifted_ = false;
+  bool rightFirst_ = false;     // 左右の順番（true＝右が先）
   State state_ = STATE_SETTLE;
   unsigned long stateStartMs_ = 0;
   int iteration_ = 0;           // 何回目か（打ち切られた回も数える）
@@ -73,6 +81,9 @@ class DebugScanBehavior : public Behavior {
   uint16_t written_[DIR_COUNT][2];  // 書いたはずのパルス幅
   uint16_t readOn_[DIR_COUNT][2];   // 読んだ ON（0 のはず）
   uint16_t readOff_[DIR_COUNT][2];  // 読んだ OFF（書いたパルス幅のはず）
+  // 向ける指示の直後のジャイロ（左・右だけ使う）
+  float kickDps_[DIR_COUNT];        // 最大の絶対値
+  int kickSamples_[DIR_COUNT];      // その間に読めた件数（0 ならジャイロが読めていない）
 
   // まとめ
   int completed_ = 0;

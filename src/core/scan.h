@@ -23,6 +23,7 @@ class NeckScan {
   bool update(const SensorData &sensors, unsigned long nowMs);
 
   bool isDone() const { return done_; }
+  bool isGranted() const { return granted_; }  // 首の使用権が取れて、向ける指示を出したか（デバッグ用）
   float cm() const { return closestCm_; }      // 最も近い有効値（なければ ULTRASONIC_MAX_CM）
   int validCount() const { return validCount_; }
   int takenCount() const { return takenCount_; }

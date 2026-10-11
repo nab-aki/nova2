@@ -1,6 +1,7 @@
 #include "debug_scan.h"
 
 #include "../config.h"
+#include "../core/gyro.h"
 #include "../core/neck.h"
 #include "../core/obstacle.h"
 #include "../core/safety.h"
@@ -9,6 +10,27 @@
 
 static const char *const DIR_NAMES[3] = {"正面", "左", "右"};
 static const char *const CUT_NAMES[3] = {"持ち上げ", "気づく（障害物「あり」）", "ほかの振る舞い"};
+
+// 左右へ向ける指示の直後のジャイロ。1件読むたびに呼ばれ、指示から DEBUG_SCAN_GYRO_WINDOW_MS の間の最大の絶対値を取る
+static bool kickOpen = false;
+static uint32_t kickStartUs = 0;
+static float kickMaxDps = 0.0f;
+static int kickCount = 0;
+
+static void OnGyroSample(const GyroSample &sample) {
+  if (!kickOpen) {
+    return;
+  }
+  int32_t sinceUs = (int32_t)(sample.timeUs - kickStartUs);
+  if (sinceUs < 0 || sinceUs >= (int32_t)DEBUG_SCAN_GYRO_WINDOW_MS * 1000) {
+    return;
+  }
+  float dps = fabsf(sample.yawRateDps);
+  if (kickCount == 0 || dps > kickMaxDps) {
+    kickMaxDps = dps;
+  }
+  kickCount++;
+}
 
 const char *DebugScanBehavior::StateName(State state) {
   switch (state) {
@@ -21,9 +43,29 @@ const char *DebugScanBehavior::StateName(State state) {
   }
 }
 
-void DebugScanBehavior::request() {
+void DebugScanBehavior::request(bool rightFirst) {
   busy_ = true;
   fresh_ = true;
+  rightFirst_ = rightFirst;
+}
+
+// 試験を終える（最後まで終わった・中断した）
+void DebugScanBehavior::Finish(void) {
+  busy_ = false;
+  inIteration_ = false;
+  kickOpen = false;
+  Gyro_SetListener(NULL);
+  Neck_Release(NECK_OWNER_RANGE);
+}
+
+// 左または右を測り始める。ジャイロの記録は、首へ指示が出た時点（使用権が取れた時点）から始める
+void DebugScanBehavior::BeginSide(Dir dir, unsigned long nowMs) {
+  scan_.begin(dir == DIR_LEFT ? SCAN_LEFT_DEG : SCAN_RIGHT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+  kickOpen = false;
+  kickMaxDps = 0.0f;
+  kickCount = 0;
+  state_ = (dir == DIR_LEFT) ? STATE_SCAN_LEFT : STATE_SCAN_RIGHT;
+  stateStartMs_ = nowMs;
 }
 
 // うろうろ（ID25）と同じ優先度。ID9（気づく）などは、うろうろ中と同じように割り込める
@@ -36,9 +78,7 @@ int DebugScanBehavior::priority(const SensorData &sensors, unsigned long nowMs) 
 void DebugScanBehavior::BeginIteration(unsigned long nowMs) {
   if (iteration_ >= DEBUG_SCAN_COUNT) {
     PrintSummary("終わりました");
-    busy_ = false;
-    inIteration_ = false;
-    Neck_Release(NECK_OWNER_RANGE);
+    Finish();
     return;
   }
   iteration_++;
@@ -58,15 +98,18 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
       noEcho_[d] = 0;
       mismatch_[d] = 0;
       readFail_[d] = 0;
+      kickDps_[d] = 0.0f;
+      kickSamples_[d] = 0;
       minCm_[d] = 0.0f;
       maxCm_[d] = 0.0f;
       sumCm_[d] = 0.0;
     }
     memset(cutByReason_, 0, sizeof(cutByReason_));
     memset(cutByState_, 0, sizeof(cutByState_));
-    Log_Printf("見回し試験", "見回しを%d回くり返します（車体は動きません。ため %dms → 正面 → 左 → 右、各%d回の測距。どのキーでも中断）",
-               DEBUG_SCAN_COUNT, WANDER_REST_MS, WANDER_SCAN_SAMPLES);
+    Log_Printf("見回し試験", "見回しを%d回くり返します（車体は動きません。ため %dms → %s、各%d回の測距。どのキーでも中断）",
+               DEBUG_SCAN_COUNT, WANDER_REST_MS, rightFirst_ ? "正面 → 右 → 左" : "正面 → 左 → 右", WANDER_SCAN_SAMPLES);
   }
+  Gyro_SetListener(OnGyroSample);
   BeginIteration(nowMs);   // 割り込みから戻ったときも、次の回を最初（ため）から始める
 }
 
@@ -76,6 +119,7 @@ void DebugScanBehavior::NoteCut(CutReason reason, unsigned long nowMs) {
     return;
   }
   inIteration_ = false;
+  kickOpen = false;
   cutByReason_[reason]++;
   cutByState_[state_]++;
   Log_Printf("見回し試験", "%d/%d 「%s」の途中で打ち切り（%s。%lums 目。首 %d°・直近の距離 %.1fcm・障害物 %s）",
@@ -98,9 +142,7 @@ void DebugScanBehavior::abort(const char *reason) {
   char why[64];
   snprintf(why, sizeof(why), "中断しました（%s）", reason);
   PrintSummary(why);
-  busy_ = false;
-  inIteration_ = false;
-  Neck_Release(NECK_OWNER_RANGE);
+  Finish();
 }
 
 void DebugScanBehavior::StoreScan(Dir dir, unsigned long nowMs) {
@@ -108,6 +150,11 @@ void DebugScanBehavior::StoreScan(Dir dir, unsigned long nowMs) {
   valid_[dir] = scan_.validCount();
   panDeg_[dir] = Servo_GetAngle(SERVO_PAN);
   tookMs_[dir] = nowMs - stateStartMs_;
+  if (dir != DIR_FRONT) {
+    kickDps_[dir] = kickMaxDps;
+    kickSamples_[dir] = kickCount;
+    kickOpen = false;
+  }
   // 切り分け用：サーボのチャンネルの値を PCA9685 から読み戻し、書いたはずの値と比べる（読むだけ。動きは変えない）
   bool anyFail = false;
   bool anyMismatch = false;
@@ -166,14 +213,24 @@ void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
   for (int d = 0; d < DIR_COUNT; d++) {
     FormatReadBack((Dir)d, back[d], sizeof(back[d]));
   }
+  // 指示の直後のジャイロ。1件も読めていなければ「-」
+  char kick[DIR_COUNT][12];
+  for (int d = DIR_LEFT; d < DIR_COUNT; d++) {
+    if (kickSamples_[d] > 0) {
+      snprintf(kick[d], sizeof(kick[d]), "%.1f", kickDps_[d]);
+    } else {
+      snprintf(kick[d], sizeof(kick[d]), "-");
+    }
+  }
   Log_Printf("見回し試験", "%d/%d 正面 %.1fcm（有効%d/%d）／左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d） "
-             "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums",
+             "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums 指示の直後%dmsのジャイロ 左 %s／右 %sdps",
              iteration_, DEBUG_SCAN_COUNT,
              cm_[DIR_FRONT], valid_[DIR_FRONT], WANDER_SCAN_SAMPLES,
              cm_[DIR_LEFT], valid_[DIR_LEFT], WANDER_SCAN_SAMPLES,
              cm_[DIR_RIGHT], valid_[DIR_RIGHT], WANDER_SCAN_SAMPLES,
              panDeg_[DIR_FRONT], panDeg_[DIR_LEFT], panDeg_[DIR_RIGHT],
-             tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT]);
+             tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT],
+             DEBUG_SCAN_GYRO_WINDOW_MS, kick[DIR_LEFT], kick[DIR_RIGHT]);
   Log_Printf("見回し試験", "   読み戻し 正面：%s／左：%s／右：%s", back[DIR_FRONT], back[DIR_LEFT], back[DIR_RIGHT]);
   inIteration_ = false;
   BeginIteration(nowMs);
@@ -184,7 +241,8 @@ void DebugScanBehavior::PrintSummary(const char *why) {
   for (int r = 0; r < CUT_COUNT; r++) {
     cuts += cutByReason_[r];
   }
-  Log_Printf("見回し試験", "%s。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why, completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
+  Log_Printf("見回し試験", "%s。順番：%s。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why,
+             rightFirst_ ? "正面 → 右 → 左" : "正面 → 左 → 右", completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
   Log_Raw("| 方向 | 有効な回 | 測れず（80cm 扱い） | 最小 cm | 最大 cm | 平均 cm |");
   Log_Raw("|---|---|---|---|---|---|");
   for (int d = 0; d < DIR_COUNT; d++) {
@@ -240,29 +298,30 @@ void DebugScanBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
         return;
       }
       StoreScan(DIR_FRONT, nowMs);
-      scan_.begin(SCAN_LEFT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
-      state_ = STATE_SCAN_LEFT;
-      stateStartMs_ = nowMs;
+      BeginSide(rightFirst_ ? DIR_RIGHT : DIR_LEFT, nowMs);
       return;
 
     case STATE_SCAN_LEFT:
-      if (!scan_.update(sensors, nowMs)) {
+    case STATE_SCAN_RIGHT: {
+      Dir dir = (state_ == STATE_SCAN_LEFT) ? DIR_LEFT : DIR_RIGHT;
+      Dir first = rightFirst_ ? DIR_RIGHT : DIR_LEFT;
+      bool done = scan_.update(sensors, nowMs);
+      if (!kickOpen && !done && scan_.isGranted()) {
+        kickStartUs = micros();   // 首へ指示が出た。ここから DEBUG_SCAN_GYRO_WINDOW_MS の間のジャイロを取る
+        kickOpen = true;
+      }
+      if (!done) {
         return;
       }
-      StoreScan(DIR_LEFT, nowMs);
-      scan_.begin(SCAN_RIGHT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
-      state_ = STATE_SCAN_RIGHT;
-      stateStartMs_ = nowMs;
-      return;
-
-    case STATE_SCAN_RIGHT:
-      if (!scan_.update(sensors, nowMs)) {
-        return;
+      StoreScan(dir, nowMs);
+      if (dir == first) {
+        BeginSide(dir == DIR_LEFT ? DIR_RIGHT : DIR_LEFT, nowMs);
+      } else {
+        state_ = STATE_FACE_FRONT;
+        stateStartMs_ = nowMs;
       }
-      StoreScan(DIR_RIGHT, nowMs);
-      state_ = STATE_FACE_FRONT;
-      stateStartMs_ = nowMs;
       return;
+    }
 
     case STATE_FACE_FRONT:
       // うろうろと同じ：首を正面・水平に戻し、安定を待つ
