@@ -8,6 +8,10 @@
 // さらに、首へ指示を出すたびに（1つ目・2つ目・正面へ戻す）、指示からジャイロの絶対値が初めて DEBUG_SCAN_ONSET_DPS 以上になるまでの
 // 時間（動き出すまでの時間）を記録する。見る範囲は次の指示を出すまで（正面へ戻す指示は最大 DEBUG_SCAN_ONSET_FRONT_MS）。
 // どちらも試験での記録だけで、動きの判断には使わない。
+//
+// キー u は、o と同じ順（正面 → 左 → 右）で、1つ目の指示（左）と同時に上下のサーボも動かす版（servo2 98°→DEBUG_SCAN_TILT_DEG。
+// 2つ目の指示ではそのまま、正面へ戻すときに 98° へ戻す）。この版では、キー k の状態に関係なく上下の書き込みは省かない（終わると元に戻す）。
+// 上下の動きは、ジャイロの水平2軸（X・Y）の合成で記録する（動き出すまでの時間と、直後 DEBUG_SCAN_GYRO_WINDOW_MS の最大値。左右とは別）。
 // 「正面へ戻す」の動き出しは、行を出す時点では見終わっていないので、見終わるまで行の出力を待つ（動きは変えない）。
 //
 // 目的：首が毎回左右に動くか、3方向の測距がばらつかないか、見回しが途中で打ち切られるかを、
@@ -32,8 +36,9 @@ class DebugScanBehavior : public Behavior {
   void onStop(unsigned long nowMs) override;
 
   // 試験を予約する。次の調停で始まる（受け付けてよいかは main.cpp が見る）。
-  // rightFirst が true なら「正面 → 右 → 左」の順（キー i）、false なら「正面 → 左 → 右」（キー o）
-  void request(bool rightFirst);
+  // rightFirst が true なら「正面 → 右 → 左」の順（キー i）、false なら「正面 → 左 → 右」（キー o）。
+  // tiltWithFirst が true なら、1つ目の指示と同時に上下も動かす（キー u。rightFirst は false にする）
+  void request(bool rightFirst, bool tiltWithFirst);
 
   // 予約済み、または実行中か
   bool isBusy() const { return busy_; }
@@ -73,6 +78,9 @@ class DebugScanBehavior : public Behavior {
   bool inIteration_ = false;    // 1回の見回しの途中か
   bool lifted_ = false;
   bool rightFirst_ = false;     // 左右の順番（true＝右が先）
+  bool tiltMode_ = false;       // 1つ目の指示と同時に上下も動かす版（キー u）
+  bool skipOverridden_ = false; // 上下の書き込みを「省かない」に固定している間（終わったら元に戻す）
+  bool savedSkip_ = false;      // 固定する前の、上下の書き込みを省く設定
   bool finishing_ = false;      // 最後の回の「正面へ戻す」の動き出しを見終わるのを待っている
   bool frontInstructed_ = false;  // 「正面へ戻す」の指示を出したか（この回）
   State state_ = STATE_SETTLE;
@@ -98,6 +106,10 @@ class DebugScanBehavior : public Behavior {
   int onsetMs_[3];
   int onsetIndex_ = -1;                 // いま見ている指示（-1＝見ていない）
   unsigned long onsetOpenMs_ = 0;       // その指示を出した時刻（millis）
+  // 上下の動き（キー u だけ。ジャイロの水平2軸の合成。1つ目の指示から2つ目の指示を出すまでを見る）
+  int tiltOnsetMs_ = -1;                // 動き出すまでの時間（見つからなければ -1）
+  float tiltKickDps_ = 0.0f;            // 指示の直後 DEBUG_SCAN_GYRO_WINDOW_MS の最大
+  int tiltKickN_ = 0;                   // その間に読めた件数（0 なら「-」）
   // 「正面へ戻す」の動き出しが分かるまで、行の出力を待たせる
   bool pending_ = false;
   char pendingRow_[512];                // 動き出し以外の部分を整形した行
@@ -108,6 +120,13 @@ class DebugScanBehavior : public Behavior {
   int onsetNone_[3];                    // 見つからなかった回数（「-」）
   int onsetMin_[3];
   int onsetMax_[3];
+  int tiltOnsetN_ = 0;
+  int tiltOnsetNone_ = 0;
+  int tiltOnsetMin_ = 0;
+  int tiltOnsetMax_ = 0;
+  int tiltKickCount_ = 0;               // 直後の最大が取れた回数
+  float tiltKickMin_ = 0.0f;
+  float tiltKickMax_ = 0.0f;
   int completed_ = 0;
   int measured_[DIR_COUNT];     // 有効な値が取れた回数
   int noEcho_[DIR_COUNT];       // 1回も測れなかった回数（80cm 扱い）

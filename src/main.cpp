@@ -143,6 +143,8 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "o:見回しの試験（一時停止中だけ。車体は動かさず、うろうろと同じ見回しを%d回くり返して、まとめを出す。どのキーでも中断）",
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "i:見回しの試験の、左右の順番を逆にした版（正面 → 右 → 左。ほかは o と同じ）");
+  Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の書き込みは k に関係なく省かない。上下の動きはジャイロで記録）",
+             SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
   Log_Printf("キー", "k:実験用（一時停止中だけ）。上下のサーボへの書き込みを省く／省かない を切り替え（入のときは、上下の角度が今の値と同じなら PCA9685 へ書かない。起動時は省かない）。いま：%s",
              Servo_IsSkipUnchangedTilt() ? "省く" : "省かない");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
@@ -199,8 +201,8 @@ static void RequestContTurn(TurnKind kind) {
   RequestDebugTurn(kind, ContTurnMs(), DEBUG_CONT_TURN_DEG);
 }
 
-// o・i：見回しの試験（i は左右の順番が逆）。一時停止中で、車体が止まっているときだけ受け付ける
-static void RequestDebugScan(bool rightFirst) {
+// o・i・u：見回しの試験（i は左右の順番が逆、u は1つ目の指示と同時に上下も動かす）。一時停止中で、車体が止まっているときだけ受け付ける
+static void RequestDebugScan(bool rightFirst, bool tiltWithFirst) {
   if (!Pause_IsPaused()) {
     Log_Printf("キー", "見回しの試験は一時停止中（p）にしてから押してください");
     return;
@@ -214,7 +216,7 @@ static void RequestDebugScan(bool rightFirst) {
                                                   : "持ち上げられているので無視します（床に置いてから押してください）");
     return;
   }
-  debugScanBehavior.request(rightFirst);
+  debugScanBehavior.request(rightFirst, tiltWithFirst);
 }
 
 // k：実験用。上下のサーボへの書き込みを省く／省かない を切り替える（首が動かない回の切り分け）。一時停止中だけ受け付ける
@@ -368,7 +370,7 @@ static void HandleSerialKeys(void) {
       debugGyroSpinBehavior.abort(reason, now);
       continue;
     }
-    // 見回しの試験（o・i）の最中も、どのキーでも中断する
+    // 見回しの試験（o・i・u）の最中も、どのキーでも中断する
     if (debugScanBehavior.isBusy()) {
       char reason[32];
       snprintf(reason, sizeof(reason), "キー '%c'", c);
@@ -412,8 +414,9 @@ static void HandleSerialKeys(void) {
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
       case 'n': RequestGyroSpin(); break;
-      case 'o': RequestDebugScan(false); break;
-      case 'i': RequestDebugScan(true); break;
+      case 'o': RequestDebugScan(false, false); break;
+      case 'i': RequestDebugScan(true, false); break;
+      case 'u': RequestDebugScan(false, true); break;
       case 'k': ToggleSkipTiltWrite(); break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
@@ -489,7 +492,7 @@ void loop() {
     if (debugGyroSpinBehavior.isBusy()) {
       debugGyroSpinBehavior.abort("リモコン ▶", now);   // 測定（n）の最中は、一時停止を切り替えずに中断だけする
     } else if (debugScanBehavior.isBusy()) {
-      debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o・i）も同じ
+      debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o・i・u）も同じ
     } else {
       TogglePause("リモコン ▶", now);
     }

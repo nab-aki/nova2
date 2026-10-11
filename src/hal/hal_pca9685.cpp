@@ -7,7 +7,7 @@
 #include "hal_i2c.h"
 #include "hal_pins.h"
 
-// PCA9685 データシート（NXP Semiconductors, Rev. 4 - 7 April 2015）
+// PCA9685 データシート（NXP Semiconductors, Rev. 4 - 16 April 2015。取得した PDF の表紙の日付）
 // https://www.nxp.com/docs/en/data-sheet/PCA9685.pdf
 // MODE1 レジスタ（アドレス 0x00）。Table 4「MODE1 bit description」より、bit0 = ALLCALL。
 #define PCA9685_MODE1_REG         0x00
