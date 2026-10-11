@@ -6,6 +6,8 @@
 
 static int currentAngle[2] = {SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG};
 static uint16_t lastPulseWidth[2] = {0, 0};   // 最後に書いたパルス幅（読み戻しと比べるために覚えておく）
+static bool skipUnchangedTilt = false;        // 実験用。起動時は切
+static uint32_t tiltWritesSkipped = 0;
 
 // 角度（0〜180°）→パルス幅。公式サンプル 01.2_Servo と同じ map(0-180 -> 102-512)（50Hz動作）
 static uint16_t AngleToPulseWidth(int angleDeg) {
@@ -22,6 +24,10 @@ int Servo_SetAngle(ServoId servo, int angleDeg) {
     Pca9685_SetPulseWidth(PCA9685_CH_SERVO1, AngleToPulseWidth(angleDeg));
   } else {
     angleDeg = constrain(angleDeg, SERVO2_MIN_DEG, SERVO2_MAX_DEG);
+    if (skipUnchangedTilt && angleDeg == currentAngle[SERVO_TILT]) {
+      tiltWritesSkipped++;   // 実験用：同じ角度なら書かない（パルス幅も角度も変わらない）
+      return angleDeg;
+    }
     Pca9685_SetPulseWidth(PCA9685_CH_SERVO2, AngleToPulseWidth(angleDeg));
   }
   lastPulseWidth[servo] = AngleToPulseWidth(angleDeg);
@@ -36,6 +42,18 @@ int Servo_GetAngle(ServoId servo) {
 bool Servo_ReadBack(ServoId servo, uint16_t *written, uint16_t *readOn, uint16_t *readOff) {
   *written = lastPulseWidth[servo];
   return Pca9685_ReadOnOff(servo == SERVO_PAN ? PCA9685_CH_SERVO1 : PCA9685_CH_SERVO2, readOn, readOff);
+}
+
+void Servo_SetSkipUnchangedTilt(bool enabled) {
+  skipUnchangedTilt = enabled;
+}
+
+bool Servo_IsSkipUnchangedTilt(void) {
+  return skipUnchangedTilt;
+}
+
+uint32_t Servo_TiltWritesSkipped(void) {
+  return tiltWritesSkipped;
 }
 
 void Servo_Center(void) {

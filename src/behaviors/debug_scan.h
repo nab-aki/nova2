@@ -5,6 +5,10 @@
 //
 // 左右へ向ける指示の直後 DEBUG_SCAN_GYRO_WINDOW_MS の間の、ジャイロ（車体の回る速さ）の最大の絶対値も出す。
 // 首が振れると車体がわずかに反動で揺れるので、首が実際に動いたかの目安になる。
+// さらに、首へ指示を出すたびに（1つ目・2つ目・正面へ戻す）、指示からジャイロの絶対値が初めて DEBUG_SCAN_ONSET_DPS 以上になるまでの
+// 時間（動き出すまでの時間）を記録する。見る範囲は次の指示を出すまで（正面へ戻す指示は最大 DEBUG_SCAN_ONSET_FRONT_MS）。
+// どちらも試験での記録だけで、動きの判断には使わない。
+// 「正面へ戻す」の動き出しは、行を出す時点では見終わっていないので、見終わるまで行の出力を待つ（動きは変えない）。
 //
 // 目的：首が毎回左右に動くか、3方向の測距がばらつかないか、見回しが途中で打ち切られるかを、
 // ケーブルをつないだまま確かめる。ID16「見回し探索」の土台にもする。
@@ -52,6 +56,9 @@ class DebugScanBehavior : public Behavior {
 
   void BeginIteration(unsigned long nowMs);
   void BeginSide(Dir dir, unsigned long nowMs);
+  void OpenMove(int index, uint32_t instructedUs, unsigned long nowMs);
+  void CloseMove(void);
+  void FlushPending(void);
   void Finish(void);
   void StoreScan(Dir dir, unsigned long nowMs);
   bool Matches(Dir dir, int servo) const;
@@ -66,6 +73,8 @@ class DebugScanBehavior : public Behavior {
   bool inIteration_ = false;    // 1回の見回しの途中か
   bool lifted_ = false;
   bool rightFirst_ = false;     // 左右の順番（true＝右が先）
+  bool finishing_ = false;      // 最後の回の「正面へ戻す」の動き出しを見終わるのを待っている
+  bool frontInstructed_ = false;  // 「正面へ戻す」の指示を出したか（この回）
   State state_ = STATE_SETTLE;
   unsigned long stateStartMs_ = 0;
   int iteration_ = 0;           // 何回目か（打ち切られた回も数える）
@@ -85,7 +94,20 @@ class DebugScanBehavior : public Behavior {
   float kickDps_[DIR_COUNT];        // 最大の絶対値
   int kickSamples_[DIR_COUNT];      // その間に読めた件数（0 ならジャイロが読めていない）
 
+  // 動き出すまでの時間（ms。見つからなければ -1）。[0]＝1つ目の指示、[1]＝2つ目、[2]＝正面へ戻す
+  int onsetMs_[3];
+  int onsetIndex_ = -1;                 // いま見ている指示（-1＝見ていない）
+  unsigned long onsetOpenMs_ = 0;       // その指示を出した時刻（millis）
+  // 「正面へ戻す」の動き出しが分かるまで、行の出力を待たせる
+  bool pending_ = false;
+  char pendingRow_[512];                // 動き出し以外の部分を整形した行
+  char pendingBack_[512];               // 読み戻しの行
+
   // まとめ
+  int onsetN_[3];                       // 動き出しが見つかった回数
+  int onsetNone_[3];                    // 見つからなかった回数（「-」）
+  int onsetMin_[3];
+  int onsetMax_[3];
   int completed_ = 0;
   int measured_[DIR_COUNT];     // 有効な値が取れた回数
   int noEcho_[DIR_COUNT];       // 1回も測れなかった回数（80cm 扱い）

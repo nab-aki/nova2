@@ -143,6 +143,8 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "o:見回しの試験（一時停止中だけ。車体は動かさず、うろうろと同じ見回しを%d回くり返して、まとめを出す。どのキーでも中断）",
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "i:見回しの試験の、左右の順番を逆にした版（正面 → 右 → 左。ほかは o と同じ）");
+  Log_Printf("キー", "k:実験用（一時停止中だけ）。上下のサーボへの書き込みを省く／省かない を切り替え（入のときは、上下の角度が今の値と同じなら PCA9685 へ書かない。起動時は省かない）。いま：%s",
+             Servo_IsSkipUnchangedTilt() ? "省く" : "省かない");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -213,6 +215,19 @@ static void RequestDebugScan(bool rightFirst) {
     return;
   }
   debugScanBehavior.request(rightFirst);
+}
+
+// k：実験用。上下のサーボへの書き込みを省く／省かない を切り替える（首が動かない回の切り分け）。一時停止中だけ受け付ける
+static void ToggleSkipTiltWrite(void) {
+  if (!Pause_IsPaused()) {
+    Log_Printf("キー", "上下の書き込みの切り替えは一時停止中（p）にしてから押してください");
+    return;
+  }
+  Servo_SetSkipUnchangedTilt(!Servo_IsSkipUnchangedTilt());
+  Log_Printf("キー", "上下のサーボへの書き込み：%s（%s。省いた回数 %lu）",
+             Servo_IsSkipUnchangedTilt() ? "省く" : "省かない",
+             Servo_IsSkipUnchangedTilt() ? "上下の角度が今の値と同じなら PCA9685 へ書かない" : "今までどおり毎回書く",
+             (unsigned long)Servo_TiltWritesSkipped());
 }
 
 // ------------------------ デバッグキー（ジャイロの測定）------------------------ //
@@ -399,6 +414,7 @@ static void HandleSerialKeys(void) {
       case 'n': RequestGyroSpin(); break;
       case 'o': RequestDebugScan(false); break;
       case 'i': RequestDebugScan(true); break;
+      case 'k': ToggleSkipTiltWrite(); break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;

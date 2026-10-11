@@ -17,7 +17,20 @@ static uint32_t kickStartUs = 0;
 static float kickMaxDps = 0.0f;
 static int kickCount = 0;
 
+// 動き出すまでの時間：指示から、ジャイロの絶対値が初めて DEBUG_SCAN_ONSET_DPS 以上になるまで
+static bool onsetWatch = false;
+static uint32_t onsetStartUs = 0;
+static uint32_t onsetLimitUs = 0;   // 0＝次の指示まで
+static int onsetFoundMs = -1;
+
 static void OnGyroSample(const GyroSample &sample) {
+  float dps = fabsf(sample.yawRateDps);
+  if (onsetWatch && onsetFoundMs < 0) {
+    int32_t onsetSinceUs = (int32_t)(sample.timeUs - onsetStartUs);
+    if (onsetSinceUs >= 0 && (onsetLimitUs == 0 || (uint32_t)onsetSinceUs < onsetLimitUs) && dps >= DEBUG_SCAN_ONSET_DPS) {
+      onsetFoundMs = onsetSinceUs / 1000;
+    }
+  }
   if (!kickOpen) {
     return;
   }
@@ -25,11 +38,22 @@ static void OnGyroSample(const GyroSample &sample) {
   if (sinceUs < 0 || sinceUs >= (int32_t)DEBUG_SCAN_GYRO_WINDOW_MS * 1000) {
     return;
   }
-  float dps = fabsf(sample.yawRateDps);
   if (kickCount == 0 || dps > kickMaxDps) {
     kickMaxDps = dps;
   }
   kickCount++;
+}
+
+static const char *SkipText(void) {
+  return Servo_IsSkipUnchangedTilt() ? "省く" : "省かない";
+}
+
+static void FormatOnset(int ms, char *out, size_t size) {
+  if (ms < 0) {
+    snprintf(out, size, "-");
+  } else {
+    snprintf(out, size, "%d", ms);
+  }
 }
 
 const char *DebugScanBehavior::StateName(State state) {
@@ -53,7 +77,11 @@ void DebugScanBehavior::request(bool rightFirst) {
 void DebugScanBehavior::Finish(void) {
   busy_ = false;
   inIteration_ = false;
+  finishing_ = false;
+  pending_ = false;
   kickOpen = false;
+  onsetWatch = false;
+  onsetIndex_ = -1;
   Gyro_SetListener(NULL);
   Neck_Release(NECK_OWNER_RANGE);
 }
@@ -68,6 +96,54 @@ void DebugScanBehavior::BeginSide(Dir dir, unsigned long nowMs) {
   stateStartMs_ = nowMs;
 }
 
+// 首へ指示を出した。直前の指示の見張りを終え、この指示の動き出しを見始める（index：0＝1つ目、1＝2つ目、2＝正面へ戻す）
+void DebugScanBehavior::OpenMove(int index, uint32_t instructedUs, unsigned long nowMs) {
+  CloseMove();
+  if (index == 0) {
+    FlushPending();   // 前の回の行がまだ出ていなければ、ここで出す
+    for (int i = 0; i < 3; i++) {
+      onsetMs_[i] = -1;
+    }
+  }
+  onsetWatch = true;
+  onsetStartUs = instructedUs;
+  onsetLimitUs = (index == 2) ? (uint32_t)DEBUG_SCAN_ONSET_FRONT_MS * 1000UL : 0;
+  onsetFoundMs = -1;
+  onsetIndex_ = index;
+  onsetOpenMs_ = nowMs;
+}
+
+// 見張りを終えて、見つかった時間（なければ -1）を残す
+void DebugScanBehavior::CloseMove(void) {
+  if (onsetWatch && onsetIndex_ >= 0) {
+    onsetMs_[onsetIndex_] = onsetFoundMs;
+  }
+  onsetWatch = false;
+}
+
+// 待たせていた行を、動き出しの時間をつけて出す。まとめの集計もここで行う
+void DebugScanBehavior::FlushPending(void) {
+  if (!pending_) {
+    return;
+  }
+  CloseMove();
+  pending_ = false;
+  char t[3][12];
+  for (int i = 0; i < 3; i++) {
+    FormatOnset(onsetMs_[i], t[i], sizeof(t[i]));
+    if (onsetMs_[i] < 0) {
+      onsetNone_[i]++;
+    } else {
+      if (onsetN_[i] == 0 || onsetMs_[i] < onsetMin_[i]) onsetMin_[i] = onsetMs_[i];
+      if (onsetN_[i] == 0 || onsetMs_[i] > onsetMax_[i]) onsetMax_[i] = onsetMs_[i];
+      onsetN_[i]++;
+    }
+  }
+  Log_Printf("見回し試験", "%s 動き出すまで（しきい値 %.1fdps）1つ目 %sms／2つ目 %sms／正面へ戻す %sms",
+             pendingRow_, DEBUG_SCAN_ONSET_DPS, t[0], t[1], t[2]);
+  Log_Printf("見回し試験", "%s", pendingBack_);
+}
+
 // うろうろ（ID25）と同じ優先度。ID9（気づく）などは、うろうろ中と同じように割り込める
 int DebugScanBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
   (void)sensors;
@@ -77,6 +153,10 @@ int DebugScanBehavior::priority(const SensorData &sensors, unsigned long nowMs) 
 
 void DebugScanBehavior::BeginIteration(unsigned long nowMs) {
   if (iteration_ >= DEBUG_SCAN_COUNT) {
+    if (pending_) {
+      finishing_ = true;   // 最後の回の動き出しを見終わるまで待ってから、まとめを出す
+      return;
+    }
     PrintSummary("終わりました");
     Finish();
     return;
@@ -93,6 +173,15 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
     iteration_ = 0;
     completed_ = 0;
     lifted_ = false;
+    finishing_ = false;
+    pending_ = false;
+    for (int i = 0; i < 3; i++) {
+      onsetMs_[i] = -1;
+      onsetN_[i] = 0;
+      onsetNone_[i] = 0;
+      onsetMin_[i] = 0;
+      onsetMax_[i] = 0;
+    }
     for (int d = 0; d < DIR_COUNT; d++) {
       measured_[d] = 0;
       noEcho_[d] = 0;
@@ -108,6 +197,7 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
     memset(cutByState_, 0, sizeof(cutByState_));
     Log_Printf("見回し試験", "見回しを%d回くり返します（車体は動きません。ため %dms → %s、各%d回の測距。どのキーでも中断）",
                DEBUG_SCAN_COUNT, WANDER_REST_MS, rightFirst_ ? "正面 → 右 → 左" : "正面 → 左 → 右", WANDER_SCAN_SAMPLES);
+    Log_Printf("見回し試験", "上下のサーボへの書き込み：%s（キー k で切り替え）／ジャイロ：%s", SkipText(), Gyro_StateName());
   }
   Gyro_SetListener(OnGyroSample);
   BeginIteration(nowMs);   // 割り込みから戻ったときも、次の回を最初（ため）から始める
@@ -222,27 +312,33 @@ void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
       snprintf(kick[d], sizeof(kick[d]), "-");
     }
   }
-  Log_Printf("見回し試験", "%d/%d 正面 %.1fcm（有効%d/%d）／左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d） "
-             "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums 指示の直後%dmsのジャイロ 左 %s／右 %sdps",
-             iteration_, DEBUG_SCAN_COUNT,
-             cm_[DIR_FRONT], valid_[DIR_FRONT], WANDER_SCAN_SAMPLES,
-             cm_[DIR_LEFT], valid_[DIR_LEFT], WANDER_SCAN_SAMPLES,
-             cm_[DIR_RIGHT], valid_[DIR_RIGHT], WANDER_SCAN_SAMPLES,
-             panDeg_[DIR_FRONT], panDeg_[DIR_LEFT], panDeg_[DIR_RIGHT],
-             tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT],
-             DEBUG_SCAN_GYRO_WINDOW_MS, kick[DIR_LEFT], kick[DIR_RIGHT]);
-  Log_Printf("見回し試験", "   読み戻し 正面：%s／左：%s／右：%s", back[DIR_FRONT], back[DIR_LEFT], back[DIR_RIGHT]);
+  // 動き出し以外の部分を整形して、「正面へ戻す」の動き出しが分かるまで待たせる（FlushPending で出す）
+  snprintf(pendingRow_, sizeof(pendingRow_),
+           "%d/%d 正面 %.1fcm（有効%d/%d）／左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d） "
+           "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums 指示の直後%dmsのジャイロ 左 %s／右 %sdps 上下の書き込み：%s",
+           iteration_, DEBUG_SCAN_COUNT,
+           cm_[DIR_FRONT], valid_[DIR_FRONT], WANDER_SCAN_SAMPLES,
+           cm_[DIR_LEFT], valid_[DIR_LEFT], WANDER_SCAN_SAMPLES,
+           cm_[DIR_RIGHT], valid_[DIR_RIGHT], WANDER_SCAN_SAMPLES,
+           panDeg_[DIR_FRONT], panDeg_[DIR_LEFT], panDeg_[DIR_RIGHT],
+           tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT],
+           DEBUG_SCAN_GYRO_WINDOW_MS, kick[DIR_LEFT], kick[DIR_RIGHT], SkipText());
+  snprintf(pendingBack_, sizeof(pendingBack_), "   読み戻し 正面：%s／左：%s／右：%s",
+           back[DIR_FRONT], back[DIR_LEFT], back[DIR_RIGHT]);
+  pending_ = true;
   inIteration_ = false;
   BeginIteration(nowMs);
 }
 
 void DebugScanBehavior::PrintSummary(const char *why) {
+  FlushPending();   // 動き出しを見終わっていない行があれば、見えている分で出す
   int cuts = 0;
   for (int r = 0; r < CUT_COUNT; r++) {
     cuts += cutByReason_[r];
   }
-  Log_Printf("見回し試験", "%s。順番：%s。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why,
-             rightFirst_ ? "正面 → 右 → 左" : "正面 → 左 → 右", completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
+  Log_Printf("見回し試験", "%s。順番：%s。上下のサーボへの書き込み：%s（省いた回数 %lu）。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why,
+             rightFirst_ ? "正面 → 右 → 左" : "正面 → 左 → 右", SkipText(), (unsigned long)Servo_TiltWritesSkipped(),
+             completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
   Log_Raw("| 方向 | 有効な回 | 測れず（80cm 扱い） | 最小 cm | 最大 cm | 平均 cm |");
   Log_Raw("|---|---|---|---|---|---|");
   for (int d = 0; d < DIR_COUNT; d++) {
@@ -251,6 +347,20 @@ void DebugScanBehavior::PrintSummary(const char *why) {
               minCm_[d], maxCm_[d], (float)(sumCm_[d] / measured_[d]));
     } else {
       Log_Raw("| %s | 0 | %d | - | - | - |", DIR_NAMES[d], noEcho_[d]);
+    }
+  }
+  Log_Printf("見回し試験", "動き出すまでの時間（指示から、ジャイロの絶対値が初めて %.1fdps【仮】以上になるまで。「-」は見ている間に超えなかった回）：",
+             DEBUG_SCAN_ONSET_DPS);
+  Log_Raw("| 指示 | 動き出した回 | 「-」の回 | 最小 ms | 最大 ms |");
+  Log_Raw("|---|---|---|---|---|");
+  for (int i = 0; i < 3; i++) {
+    // 順番どおりに、何番目の指示が左右のどちらか
+    bool left = (i == 0) ? !rightFirst_ : rightFirst_;
+    const char *label = (i == 2) ? "正面へ戻す" : (i == 0 ? (left ? "1つ目（左）" : "1つ目（右）") : (left ? "2つ目（左）" : "2つ目（右）"));
+    if (onsetN_[i] > 0) {
+      Log_Raw("| %s | %d | %d | %d | %d |", label, onsetN_[i], onsetNone_[i], onsetMin_[i], onsetMax_[i]);
+    } else {
+      Log_Raw("| %s | 0 | %d | - | - |", label, onsetNone_[i]);
     }
   }
   Log_Printf("見回し試験", "サーボの読み戻し（測り終えた時点で PCA9685 から読んだ値と、書いた値の比較）：不一致 正面 %d／左 %d／右 %d回、読めず 正面 %d／左 %d／右 %d回",
@@ -267,6 +377,17 @@ void DebugScanBehavior::PrintSummary(const char *why) {
 
 void DebugScanBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
   if (!busy_) {
+    return;
+  }
+  // 「正面へ戻す」の動き出しを見終えたら（見つかったか、見る時間が過ぎた）、待たせていた行を出す
+  if (pending_ && (!onsetWatch || nowMs - onsetOpenMs_ >= (unsigned long)DEBUG_SCAN_ONSET_FRONT_MS + 50)) {
+    FlushPending();
+  }
+  if (finishing_) {
+    if (!pending_) {
+      finishing_ = false;
+      BeginIteration(nowMs);   // 最後の行が出たので、まとめを出して終わる
+    }
     return;
   }
   // 持ち上げられている間は進めない。床に戻ったら、次の回を最初（ため）から始める（うろうろと同じ）
@@ -305,10 +426,13 @@ void DebugScanBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
     case STATE_SCAN_RIGHT: {
       Dir dir = (state_ == STATE_SCAN_LEFT) ? DIR_LEFT : DIR_RIGHT;
       Dir first = rightFirst_ ? DIR_RIGHT : DIR_LEFT;
+      uint32_t beforeUs = micros();
       bool done = scan_.update(sensors, nowMs);
-      if (!kickOpen && !done && scan_.isGranted()) {
-        kickStartUs = micros();   // 首へ指示が出た。ここから DEBUG_SCAN_GYRO_WINDOW_MS の間のジャイロを取る
+      if (!kickOpen && scan_.isGranted()) {
+        // 首へ指示が出た（この update の中で使用権が取れた）。ここから動き出しと、DEBUG_SCAN_GYRO_WINDOW_MS の間のジャイロを見る
+        kickStartUs = beforeUs;
         kickOpen = true;
+        OpenMove(dir == first ? 0 : 1, beforeUs, nowMs);
       }
       if (!done) {
         return;
@@ -319,14 +443,22 @@ void DebugScanBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
       } else {
         state_ = STATE_FACE_FRONT;
         stateStartMs_ = nowMs;
+        frontInstructed_ = false;
       }
       return;
     }
 
     case STATE_FACE_FRONT:
       // うろうろと同じ：首を正面・水平に戻し、安定を待つ
-      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, nowMs)) {
-        return;
+      {
+        uint32_t beforeUs = micros();
+        if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, nowMs)) {
+          return;
+        }
+        if (!frontInstructed_) {
+          frontInstructed_ = true;
+          OpenMove(2, beforeUs, nowMs);
+        }
       }
       if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
         return;
