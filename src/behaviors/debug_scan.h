@@ -112,7 +112,8 @@ class DebugScanBehavior : public Behavior {
   int tiltKickN_ = 0;                   // その間に読めた件数（0 なら「-」）
   // 「正面へ戻す」の動き出しが分かるまで、行の出力を待たせる
   bool pending_ = false;
-  char pendingRow_[512];                // 動き出し以外の部分を整形した行
+  char pendingRow_[384];                // 1行目（距離・首・かかった時間）
+  char pendingKick_[96];                // 2行目に入れる、指示の直後のジャイロ（左右）
   char pendingBack_[512];               // 読み戻しの行
 
   // まとめ

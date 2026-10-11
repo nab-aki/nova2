@@ -127,6 +127,12 @@ static unsigned long ContTurnMs(void) {
   return (unsigned long)(DEBUG_CONT_TURN_DEG * ROTATE_CONT_MS_PER_DEG + 0.5f);
 }
 
+// サーボのチャンネルの割り当て（起動ログ・キー一覧）。入れ替えたビルドは、コネクタも入れ替えて使う
+static void PrintServoChannels(const char *tag) {
+  Log_Printf(tag, "サーボの割り当て：左右＝ch%d、上下＝ch%d（%s）", Servo_Channel(SERVO_PAN), Servo_Channel(SERVO_TILT),
+             Servo_IsSwapped() ? "入れ替えたビルド。基板のコネクタも入れ替えてあること" : "既定");
+}
+
 static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %d°。ジャイロの角度で止める。使えないとき・上限は %dms）",
              DEBUG_STEP_TURN_DEG, TurnTuning_StepMs(TURN_ROTATE_LEFT));
@@ -154,6 +160,7 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "  e/d:キックのPWM ±%d  r/f:保持のPWM ±%d（どちらも%d〜%d）",
              DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_MIN, DEBUG_TUNE_PWM_MAX);
   Log_Printf("キー", "  g:調整の対象を切り替え（その場回転⇔片側旋回。3〜6 を押してもそのグループになる）  v:両方の現在の値を表示");
+  PrintServoChannels("キー");
   Log_Printf("キー", "現在：%s／調整の対象：%s", Pause_IsPaused() ? "一時停止中" : "うろうろ中",
              tunePivot ? "片側旋回" : "その場回転");
   TurnTuning_Print(false, false);
@@ -450,6 +457,7 @@ void setup() {
   randomSeed(esp_random());
 
   bool trackOk = Hal_Setup();
+  PrintServoChannels("起動");
   if (!trackOk) {
     Log_Printf("起動", "ライントラッキングセンサーが応答しません（起動は続けます）");
   }

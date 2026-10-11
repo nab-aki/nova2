@@ -193,9 +193,11 @@ void DebugScanBehavior::FlushPending(void) {
       onsetN_[i]++;
     }
   }
-  // キー u：上下の動き（左右とは別）
-  char tiltText[160];
-  tiltText[0] = '\0';
+  // 1回ぶんは、ログの1行の上限（hal_log の 384 バイト）で切れないように、行を分けて出す
+  Log_Printf("見回し試験", "%s", pendingRow_);
+  Log_Printf("見回し試験", "   ジャイロ（左右）%s・動き出すまで（しきい値 %.1fdps）1つ目 %sms／2つ目 %sms／正面へ戻す %sms／上下の書き込み：%s",
+             pendingKick_, DEBUG_SCAN_ONSET_DPS, t[0], t[1], t[2], SkipText());
+  // キー u：上下の動き（左右とは別の行）
   if (tiltMode_) {
     char tOnset[12];
     char tKick[12];
@@ -215,11 +217,9 @@ void DebugScanBehavior::FlushPending(void) {
       if (tiltOnsetN_ == 0 || tiltOnsetMs_ > tiltOnsetMax_) tiltOnsetMax_ = tiltOnsetMs_;
       tiltOnsetN_++;
     }
-    snprintf(tiltText, sizeof(tiltText), "／上下（水平2軸の合成。しきい値 %.1fdps）動き出すまで %sms・指示の直後%dmsの最大 %sdps",
-             DEBUG_SCAN_TILT_ONSET_DPS, tOnset, DEBUG_SCAN_GYRO_WINDOW_MS, tKick);
+    Log_Printf("見回し試験", "   ジャイロ（上下。水平2軸の合成）指示の直後%dmsの最大 %sdps・動き出すまで（しきい値 %.1fdps）%sms",
+               DEBUG_SCAN_GYRO_WINDOW_MS, tKick, DEBUG_SCAN_TILT_ONSET_DPS, tOnset);
   }
-  Log_Printf("見回し試験", "%s 動き出すまで（しきい値 %.1fdps）1つ目 %sms／2つ目 %sms／正面へ戻す %sms%s",
-             pendingRow_, DEBUG_SCAN_ONSET_DPS, t[0], t[1], t[2], tiltText);
   Log_Printf("見回し試験", "%s", pendingBack_);
 }
 
@@ -292,11 +292,13 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
     Log_Printf("見回し試験", "見回しを%d回くり返します（車体は動きません。ため %dms → %s、各%d回の測距。どのキーでも中断）",
                DEBUG_SCAN_COUNT, WANDER_REST_MS, OrderText(rightFirst_, tiltMode_), WANDER_SCAN_SAMPLES);
     Log_Printf("見回し試験", "上下のサーボへの書き込み：%s（キー k で切り替え）／ジャイロ：%s", SkipText(), Gyro_StateName());
+    Log_Printf("見回し試験", "サーボの割り当て：左右＝ch%d、上下＝ch%d（%s）。読み戻しはこの割り当てのチャンネルで比べる",
+               Servo_Channel(SERVO_PAN), Servo_Channel(SERVO_TILT), Servo_IsSwapped() ? "入れ替えたビルド" : "既定");
     if (tiltMode_) {
-      Log_Printf("見回し試験", "上下も動かす版：1つ目の指示（左）と同時に servo2 を %d°→%d°（2つ目はそのまま、正面へ戻すとき %d° へ戻す）。"
-                 "この版では、キー k に関係なく上下の書き込みは省かない（終わると元に戻す）。上下の動きはジャイロの水平2軸（X・Y）の合成で見る（しきい値 %.1fdps【仮】）。"
-                 "上下が上がるので、1つ目・2つ目の距離は水平のときと違う値になる",
-                 SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG, SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_ONSET_DPS);
+      Log_Printf("見回し試験", "上下も動かす版：1つ目の指示（左）と同時に servo2 を %d°→%d°（2つ目はそのまま、正面へ戻すとき %d° へ戻す）",
+                 SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG, SERVO2_LEVEL_DEG);
+      Log_Printf("見回し試験", "この版では、キー k に関係なく上下の書き込みは省かない（終わると元に戻す）。上下が上がるので、1つ目・2つ目の距離は水平のときと違う値になる");
+      Log_Printf("見回し試験", "上下の動きは、ジャイロの水平2軸（X・Y）の合成で見る（しきい値 %.1fdps【仮】）", DEBUG_SCAN_TILT_ONSET_DPS);
     }
   }
   Gyro_SetListener(OnGyroSample);
@@ -415,14 +417,15 @@ void DebugScanBehavior::FinishIteration(unsigned long nowMs) {
   // 動き出し以外の部分を整形して、「正面へ戻す」の動き出しが分かるまで待たせる（FlushPending で出す）
   snprintf(pendingRow_, sizeof(pendingRow_),
            "%d/%d 正面 %.1fcm（有効%d/%d）／左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d） "
-           "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums 指示の直後%dmsのジャイロ 左 %s／右 %sdps 上下の書き込み：%s",
+           "首 %d°/%d°/%d° かかった時間 %lu/%lu/%lums",
            iteration_, DEBUG_SCAN_COUNT,
            cm_[DIR_FRONT], valid_[DIR_FRONT], WANDER_SCAN_SAMPLES,
            cm_[DIR_LEFT], valid_[DIR_LEFT], WANDER_SCAN_SAMPLES,
            cm_[DIR_RIGHT], valid_[DIR_RIGHT], WANDER_SCAN_SAMPLES,
            panDeg_[DIR_FRONT], panDeg_[DIR_LEFT], panDeg_[DIR_RIGHT],
-           tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT],
-           DEBUG_SCAN_GYRO_WINDOW_MS, kick[DIR_LEFT], kick[DIR_RIGHT], SkipText());
+           tookMs_[DIR_FRONT], tookMs_[DIR_LEFT], tookMs_[DIR_RIGHT]);
+  snprintf(pendingKick_, sizeof(pendingKick_), "指示の直後%dmsの最大 左 %s／右 %sdps",
+           DEBUG_SCAN_GYRO_WINDOW_MS, kick[DIR_LEFT], kick[DIR_RIGHT]);
   snprintf(pendingBack_, sizeof(pendingBack_), "   読み戻し 正面：%s／左：%s／右：%s",
            back[DIR_FRONT], back[DIR_LEFT], back[DIR_RIGHT]);
   pending_ = true;

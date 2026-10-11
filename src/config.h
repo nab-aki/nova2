@@ -64,6 +64,12 @@
 
 // ------------------------ 首サーボ ------------------------ //
 #define SERVO1_FRONT_DEG            84      // 実測：servo1（左右）の正面
+// 首の切り分け用（ビルド時の切り替え）：1 にすると、左右のサーボを PCA9685 の ch1、上下のサーボを ch0 として扱う
+// （基板上のコネクタも入れ替えて使う）。角度の範囲はサーボ（軸）に付いたままで、チャンネルには付かない。
+// 既定は 0（今までどおり 左右＝ch0、上下＝ch1）。入れ替えたビルドは platformio.ini の fnk0053_swap が -D で 1 にする。
+#ifndef SERVO_SWAP_CHANNELS
+#define SERVO_SWAP_CHANNELS         0
+#endif
 #define SERVO1_MIN_DEG              20      // 実測：servo1 の可動範囲（仕様上は 0〜180）
 #define SERVO1_MAX_DEG              140
 // 実測（2026-09-24）：servo1 は角度を大きくすると Nova の左を向く（左右は Nova 自身から見た向き）。
