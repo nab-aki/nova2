@@ -25,15 +25,4 @@ bool Servo_ReadBack(ServoId servo, uint16_t *written, uint16_t *readOn, uint16_t
 // 正面・水平（実測の基準角）に戻す
 void Servo_Center(void);
 
-// そのサーボ（軸）がつながっている PCA9685 のチャンネル。既定は 左右＝ch0・上下＝ch1。
-// config.h の SERVO_SWAP_CHANNELS が 1 のビルドでは 左右＝ch1・上下＝ch0（首の切り分け用）
-uint8_t Servo_Channel(ServoId servo);
-bool Servo_IsSwapped(void);
-
-// 実験用（キー k。首の切り分け）：入にすると、上下のサーボの角度が今の値と同じなら PCA9685 へ書かない。
-// 値が変わるときと、左右のサーボは今までどおり書く。起動時は切（今までどおり）。
-void Servo_SetSkipUnchangedTilt(bool enabled);
-bool Servo_IsSkipUnchangedTilt(void);
-uint32_t Servo_TiltWritesSkipped(void);   // 入のあいだに省いた回数（起動からの累計）
-
 #endif // NOVA_HAL_SERVO_H

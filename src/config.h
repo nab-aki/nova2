@@ -64,12 +64,6 @@
 
 // ------------------------ 首サーボ ------------------------ //
 #define SERVO1_FRONT_DEG            84      // 実測：servo1（左右）の正面
-// 首の切り分け用（ビルド時の切り替え）：1 にすると、左右のサーボを PCA9685 の ch1、上下のサーボを ch0 として扱う
-// （基板上のコネクタも入れ替えて使う）。角度の範囲はサーボ（軸）に付いたままで、チャンネルには付かない。
-// 既定は 0（今までどおり 左右＝ch0、上下＝ch1）。入れ替えたビルドは platformio.ini の fnk0053_swap が -D で 1 にする。
-#ifndef SERVO_SWAP_CHANNELS
-#define SERVO_SWAP_CHANNELS         0
-#endif
 #define SERVO1_MIN_DEG              20      // 実測：servo1 の可動範囲（仕様上は 0〜180）
 #define SERVO1_MAX_DEG              140
 // 実測（2026-09-24）：servo1 は角度を大きくすると Nova の左を向く（左右は Nova 自身から見た向き）。
@@ -313,12 +307,12 @@
 #define ROTATE_CONT_MS_PER_DEG      13.0f
 #define DEBUG_CONT_TURN_DEG         90      // キー 7・8 で回る角度（一時停止中だけ）
 #define DEBUG_STEP_TURN_DEG         30      // キー 3・4 で回る角度
-#define DEBUG_SCAN_COUNT            20      // キー o・i：止まったまま見回しをくり返す回数（behaviors/debug_scan.*。優先度はうろうろと同じ PRIORITY_WANDER）
-#define DEBUG_SCAN_ONSET_DPS        2.0f    // 【仮】キー o・i：首へ指示を出してから「動き出した」とみなすジャイロの絶対値（dps）。試験の記録だけで、動きの判断には使わない
-#define DEBUG_SCAN_ONSET_FRONT_MS   1000    // キー o・i：正面へ戻す指示のあと、動き出しを見る最大の時間（左右の指示は、次の指示を出すまで見る）
+#define DEBUG_SCAN_COUNT            20      // キー o・u：止まったまま見回しをくり返す回数（behaviors/debug_scan.*。優先度はうろうろと同じ PRIORITY_WANDER）
+#define DEBUG_SCAN_ONSET_DPS        2.0f    // 【仮】キー o・u：首へ指示を出してから「動き出した」とみなすジャイロの絶対値（dps）。試験の記録だけで、動きの判断には使わない
+#define DEBUG_SCAN_ONSET_FRONT_MS   1000    // キー o・u：正面へ戻す指示のあと、動き出しを見る最大の時間（左右の指示は、次の指示を出すまで見る）
 #define DEBUG_SCAN_TILT_DEG         113     // キー u：1つ目の指示と同時に動かす servo2 の角度（水平 98° から +15°。可動範囲 90〜140° の内側。2つ目の指示ではこのまま、正面へ戻すとき 98° へ戻す）
 #define DEBUG_SCAN_TILT_ONSET_DPS   1.0f    // 【仮】キー u：上下の動きが「動き出した」とみなすジャイロ（水平2軸 X・Y の合成）の値（dps）。動いた回と動かない回の値を見て決め直す
-#define DEBUG_SCAN_GYRO_WINDOW_MS   150     // キー o・i：左右へ向ける指示の直後、ジャイロの最大の絶対値を取る時間（首が実際に動いたかの目安）
+#define DEBUG_SCAN_GYRO_WINDOW_MS   150     // キー o・u：左右へ向ける指示の直後、ジャイロの最大の絶対値を取る時間（首が実際に動いたかの目安）
 // ジャイロの角度で止めるその場回転（docs/specs/common_gyro_turn.md。緩い版：厳密には制御せず、安全の枠だけを守る）
 #define GYRO_TURN_COAST_DEG         10.0f   // 目標の角度からこの分を引いた角度で止める（止めたあとの惰性。実測 6.2〜13.1°。固定で、調整しない。確定 2026-10-10）
 #define GYRO_TURN_STALL_MS          300     // 「回っていない」を見る区切り（回り始めの実測は 20〜70ms。確定 2026-10-10）

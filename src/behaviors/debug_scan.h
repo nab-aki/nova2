@@ -1,7 +1,6 @@
-// デバッグ：止まったまま見回しをくり返す（#0。docs/notes.md 2章。キー o・i）
+// デバッグ：止まったまま見回しをくり返す（#0。docs/notes.md 2章。キー o・u）
 // うろうろ（ID25）と同じ見回し（ため → 正面 → 左 → 右 → 正面へ戻す → 測距の履歴がたまるのを待つ）を、
 // 同じ部品（NeckScan）・同じ回数・同じ待ち時間で DEBUG_SCAN_COUNT 回くり返す。車体は動かさない。
-// キー i は、左右の順番だけを逆にした版（正面 → 右 → 左）。首が動かない回が、向きによるのか順番によるのかを見る。
 //
 // 左右へ向ける指示の直後 DEBUG_SCAN_GYRO_WINDOW_MS の間の、ジャイロ（車体の回る速さ）の最大の絶対値も出す。
 // 首が振れると車体がわずかに反動で揺れるので、首が実際に動いたかの目安になる。
@@ -10,7 +9,7 @@
 // どちらも試験での記録だけで、動きの判断には使わない。
 //
 // キー u は、o と同じ順（正面 → 左 → 右）で、1つ目の指示（左）と同時に上下のサーボも動かす版（servo2 98°→DEBUG_SCAN_TILT_DEG。
-// 2つ目の指示ではそのまま、正面へ戻すときに 98° へ戻す）。この版では、キー k の状態に関係なく上下の書き込みは省かない（終わると元に戻す）。
+// 2つ目の指示ではそのまま、正面へ戻すときに 98° へ戻す）。
 // 上下の動きは、ジャイロの水平2軸（X・Y）の合成で記録する（動き出すまでの時間と、直後 DEBUG_SCAN_GYRO_WINDOW_MS の最大値。左右とは別）。
 // 「正面へ戻す」の動き出しは、行を出す時点では見終わっていないので、見終わるまで行の出力を待つ（動きは変えない）。
 //
@@ -36,9 +35,8 @@ class DebugScanBehavior : public Behavior {
   void onStop(unsigned long nowMs) override;
 
   // 試験を予約する。次の調停で始まる（受け付けてよいかは main.cpp が見る）。
-  // rightFirst が true なら「正面 → 右 → 左」の順（キー i）、false なら「正面 → 左 → 右」（キー o）。
-  // tiltWithFirst が true なら、1つ目の指示と同時に上下も動かす（キー u。rightFirst は false にする）
-  void request(bool rightFirst, bool tiltWithFirst);
+  // 順番は「正面 → 左 → 右」。tiltWithFirst が true なら、1つ目の指示と同時に上下も動かす（キー u）。false はキー o
+  void request(bool tiltWithFirst);
 
   // 予約済み、または実行中か
   bool isBusy() const { return busy_; }
@@ -77,10 +75,7 @@ class DebugScanBehavior : public Behavior {
   bool fresh_ = false;          // 予約直後（集計をやり直す）
   bool inIteration_ = false;    // 1回の見回しの途中か
   bool lifted_ = false;
-  bool rightFirst_ = false;     // 左右の順番（true＝右が先）
   bool tiltMode_ = false;       // 1つ目の指示と同時に上下も動かす版（キー u）
-  bool skipOverridden_ = false; // 上下の書き込みを「省かない」に固定している間（終わったら元に戻す）
-  bool savedSkip_ = false;      // 固定する前の、上下の書き込みを省く設定
   bool finishing_ = false;      // 最後の回の「正面へ戻す」の動き出しを見終わるのを待っている
   bool frontInstructed_ = false;  // 「正面へ戻す」の指示を出したか（この回）
   State state_ = STATE_SETTLE;

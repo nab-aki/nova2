@@ -68,15 +68,8 @@ static void OnGyroSample(const GyroSample &sample) {
   kickCount++;
 }
 
-static const char *OrderText(bool rightFirst, bool tilt) {
-  if (rightFirst) {
-    return "正面 → 右 → 左";
-  }
+static const char *OrderText(bool tilt) {
   return tilt ? "正面 → 左（上下も同時）→ 右" : "正面 → 左 → 右";
-}
-
-static const char *SkipText(void) {
-  return Servo_IsSkipUnchangedTilt() ? "省く" : "省かない";
 }
 
 static void FormatOnset(int ms, char *out, size_t size) {
@@ -98,10 +91,9 @@ const char *DebugScanBehavior::StateName(State state) {
   }
 }
 
-void DebugScanBehavior::request(bool rightFirst, bool tiltWithFirst) {
+void DebugScanBehavior::request(bool tiltWithFirst) {
   busy_ = true;
   fresh_ = true;
-  rightFirst_ = rightFirst;
   tiltMode_ = tiltWithFirst;
 }
 
@@ -115,10 +107,6 @@ void DebugScanBehavior::Finish(void) {
   onsetWatch = false;
   onsetIndex_ = -1;
   tiltWatch = false;
-  if (skipOverridden_) {
-    Servo_SetSkipUnchangedTilt(savedSkip_);   // キー u で固定していた設定を元に戻す
-    skipOverridden_ = false;
-  }
   Gyro_SetListener(NULL);
   Neck_Release(NECK_OWNER_RANGE);
 }
@@ -195,8 +183,8 @@ void DebugScanBehavior::FlushPending(void) {
   }
   // 1回ぶんは、ログの1行の上限（hal_log の 384 バイト）で切れないように、行を分けて出す
   Log_Printf("見回し試験", "%s", pendingRow_);
-  Log_Printf("見回し試験", "   ジャイロ（左右）%s・動き出すまで（しきい値 %.1fdps）1つ目 %sms／2つ目 %sms／正面へ戻す %sms／上下の書き込み：%s",
-             pendingKick_, DEBUG_SCAN_ONSET_DPS, t[0], t[1], t[2], SkipText());
+  Log_Printf("見回し試験", "   ジャイロ（左右）%s・動き出すまで（しきい値 %.1fdps）1つ目 %sms／2つ目 %sms／正面へ戻す %sms",
+             pendingKick_, DEBUG_SCAN_ONSET_DPS, t[0], t[1], t[2]);
   // キー u：上下の動き（左右とは別の行）
   if (tiltMode_) {
     char tOnset[12];
@@ -282,22 +270,15 @@ void DebugScanBehavior::onStart(unsigned long nowMs) {
     tiltKickCount_ = 0;
     tiltKickMin_ = 0.0f;
     tiltKickMax_ = 0.0f;
-    if (tiltMode_) {
-      savedSkip_ = Servo_IsSkipUnchangedTilt();
-      Servo_SetSkipUnchangedTilt(false);   // キー u：キー k の状態に関係なく、上下の書き込みは省かない
-      skipOverridden_ = true;
-    }
     memset(cutByReason_, 0, sizeof(cutByReason_));
     memset(cutByState_, 0, sizeof(cutByState_));
     Log_Printf("見回し試験", "見回しを%d回くり返します（車体は動きません。ため %dms → %s、各%d回の測距。どのキーでも中断）",
-               DEBUG_SCAN_COUNT, WANDER_REST_MS, OrderText(rightFirst_, tiltMode_), WANDER_SCAN_SAMPLES);
-    Log_Printf("見回し試験", "上下のサーボへの書き込み：%s（キー k で切り替え）／ジャイロ：%s", SkipText(), Gyro_StateName());
-    Log_Printf("見回し試験", "サーボの割り当て：左右＝ch%d、上下＝ch%d（%s）。読み戻しはこの割り当てのチャンネルで比べる",
-               Servo_Channel(SERVO_PAN), Servo_Channel(SERVO_TILT), Servo_IsSwapped() ? "入れ替えたビルド" : "既定");
+               DEBUG_SCAN_COUNT, WANDER_REST_MS, OrderText(tiltMode_), WANDER_SCAN_SAMPLES);
+    Log_Printf("見回し試験", "ジャイロ：%s", Gyro_StateName());
     if (tiltMode_) {
       Log_Printf("見回し試験", "上下も動かす版：1つ目の指示（左）と同時に servo2 を %d°→%d°（2つ目はそのまま、正面へ戻すとき %d° へ戻す）",
                  SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG, SERVO2_LEVEL_DEG);
-      Log_Printf("見回し試験", "この版では、キー k に関係なく上下の書き込みは省かない（終わると元に戻す）。上下が上がるので、1つ目・2つ目の距離は水平のときと違う値になる");
+      Log_Printf("見回し試験", "上下が上がるので、1つ目・2つ目の距離は水平のときと違う値になる");
       Log_Printf("見回し試験", "上下の動きは、ジャイロの水平2軸（X・Y）の合成で見る（しきい値 %.1fdps【仮】）", DEBUG_SCAN_TILT_ONSET_DPS);
     }
   }
@@ -439,9 +420,8 @@ void DebugScanBehavior::PrintSummary(const char *why) {
   for (int r = 0; r < CUT_COUNT; r++) {
     cuts += cutByReason_[r];
   }
-  Log_Printf("見回し試験", "%s。順番：%s。上下のサーボへの書き込み：%s（省いた回数 %lu）。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why,
-             OrderText(rightFirst_, tiltMode_), SkipText(), (unsigned long)Servo_TiltWritesSkipped(),
-             completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
+  Log_Printf("見回し試験", "%s。順番：%s。最後まで測れた回 %d／打ち切り %d（始めた回 %d／%d）", why,
+             OrderText(tiltMode_), completed_, cuts, iteration_, DEBUG_SCAN_COUNT);
   Log_Raw("| 方向 | 有効な回 | 測れず（80cm 扱い） | 最小 cm | 最大 cm | 平均 cm |");
   Log_Raw("|---|---|---|---|---|---|");
   for (int d = 0; d < DIR_COUNT; d++) {
@@ -457,9 +437,7 @@ void DebugScanBehavior::PrintSummary(const char *why) {
   Log_Raw("| 指示 | 動き出した回 | 「-」の回 | 最小 ms | 最大 ms |");
   Log_Raw("|---|---|---|---|---|");
   for (int i = 0; i < 3; i++) {
-    // 順番どおりに、何番目の指示が左右のどちらか
-    bool left = (i == 0) ? !rightFirst_ : rightFirst_;
-    const char *label = (i == 2) ? "正面へ戻す" : (i == 0 ? (left ? "1つ目（左）" : "1つ目（右）") : (left ? "2つ目（左）" : "2つ目（右）"));
+    const char *label = (i == 2) ? "正面へ戻す" : (i == 0 ? "1つ目（左）" : "2つ目（右）");
     if (onsetN_[i] > 0) {
       Log_Raw("| %s | %d | %d | %d | %d |", label, onsetN_[i], onsetNone_[i], onsetMin_[i], onsetMax_[i]);
     } else {
@@ -536,27 +514,26 @@ void DebugScanBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs)
         return;
       }
       StoreScan(DIR_FRONT, nowMs);
-      BeginSide(rightFirst_ ? DIR_RIGHT : DIR_LEFT, nowMs);
+      BeginSide(DIR_LEFT, nowMs);
       return;
 
     case STATE_SCAN_LEFT:
     case STATE_SCAN_RIGHT: {
       Dir dir = (state_ == STATE_SCAN_LEFT) ? DIR_LEFT : DIR_RIGHT;
-      Dir first = rightFirst_ ? DIR_RIGHT : DIR_LEFT;
       uint32_t beforeUs = micros();
       bool done = scan_.update(sensors, nowMs);
       if (!kickOpen && scan_.isGranted()) {
         // 首へ指示が出た（この update の中で使用権が取れた）。ここから動き出しと、DEBUG_SCAN_GYRO_WINDOW_MS の間のジャイロを見る
         kickStartUs = beforeUs;
         kickOpen = true;
-        OpenMove(dir == first ? 0 : 1, beforeUs, nowMs);
+        OpenMove(dir == DIR_LEFT ? 0 : 1, beforeUs, nowMs);
       }
       if (!done) {
         return;
       }
       StoreScan(dir, nowMs);
-      if (dir == first) {
-        BeginSide(dir == DIR_LEFT ? DIR_RIGHT : DIR_LEFT, nowMs);
+      if (dir == DIR_LEFT) {
+        BeginSide(DIR_RIGHT, nowMs);
       } else {
         state_ = STATE_FACE_FRONT;
         stateStartMs_ = nowMs;

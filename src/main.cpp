@@ -127,12 +127,6 @@ static unsigned long ContTurnMs(void) {
   return (unsigned long)(DEBUG_CONT_TURN_DEG * ROTATE_CONT_MS_PER_DEG + 0.5f);
 }
 
-// サーボのチャンネルの割り当て（起動ログ・キー一覧）。入れ替えたビルドは、コネクタも入れ替えて使う
-static void PrintServoChannels(const char *tag) {
-  Log_Printf(tag, "サーボの割り当て：左右＝ch%d、上下＝ch%d（%s）", Servo_Channel(SERVO_PAN), Servo_Channel(SERVO_TILT),
-             Servo_IsSwapped() ? "入れ替えたビルド。基板のコネクタも入れ替えてあること" : "既定");
-}
-
 static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %d°。ジャイロの角度で止める。使えないとき・上限は %dms）",
              DEBUG_STEP_TURN_DEG, TurnTuning_StepMs(TURN_ROTATE_LEFT));
@@ -148,11 +142,8 @@ static void PrintKeyHelp(void) {
              GYRO_MEASURE_STATIC_MS / 1000, (3 * GYRO_SPIN_SEGMENT_MS + GYRO_SPIN_RAMP_MS + GYRO_SPIN_GAP_MS) / 1000);
   Log_Printf("キー", "o:見回しの試験（一時停止中だけ。車体は動かさず、うろうろと同じ見回しを%d回くり返して、まとめを出す。どのキーでも中断）",
              DEBUG_SCAN_COUNT);
-  Log_Printf("キー", "i:見回しの試験の、左右の順番を逆にした版（正面 → 右 → 左。ほかは o と同じ）");
-  Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の書き込みは k に関係なく省かない。上下の動きはジャイロで記録）",
+  Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
-  Log_Printf("キー", "k:実験用（一時停止中だけ）。上下のサーボへの書き込みを省く／省かない を切り替え（入のときは、上下の角度が今の値と同じなら PCA9685 へ書かない。起動時は省かない）。いま：%s",
-             Servo_IsSkipUnchangedTilt() ? "省く" : "省かない");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -160,7 +151,6 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "  e/d:キックのPWM ±%d  r/f:保持のPWM ±%d（どちらも%d〜%d）",
              DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_STEP, DEBUG_TUNE_PWM_MIN, DEBUG_TUNE_PWM_MAX);
   Log_Printf("キー", "  g:調整の対象を切り替え（その場回転⇔片側旋回。3〜6 を押してもそのグループになる）  v:両方の現在の値を表示");
-  PrintServoChannels("キー");
   Log_Printf("キー", "現在：%s／調整の対象：%s", Pause_IsPaused() ? "一時停止中" : "うろうろ中",
              tunePivot ? "片側旋回" : "その場回転");
   TurnTuning_Print(false, false);
@@ -208,8 +198,8 @@ static void RequestContTurn(TurnKind kind) {
   RequestDebugTurn(kind, ContTurnMs(), DEBUG_CONT_TURN_DEG);
 }
 
-// o・i・u：見回しの試験（i は左右の順番が逆、u は1つ目の指示と同時に上下も動かす）。一時停止中で、車体が止まっているときだけ受け付ける
-static void RequestDebugScan(bool rightFirst, bool tiltWithFirst) {
+// o・u：見回しの試験（u は1つ目の指示と同時に上下も動かす）。一時停止中で、車体が止まっているときだけ受け付ける
+static void RequestDebugScan(bool tiltWithFirst) {
   if (!Pause_IsPaused()) {
     Log_Printf("キー", "見回しの試験は一時停止中（p）にしてから押してください");
     return;
@@ -223,20 +213,7 @@ static void RequestDebugScan(bool rightFirst, bool tiltWithFirst) {
                                                   : "持ち上げられているので無視します（床に置いてから押してください）");
     return;
   }
-  debugScanBehavior.request(rightFirst, tiltWithFirst);
-}
-
-// k：実験用。上下のサーボへの書き込みを省く／省かない を切り替える（首が動かない回の切り分け）。一時停止中だけ受け付ける
-static void ToggleSkipTiltWrite(void) {
-  if (!Pause_IsPaused()) {
-    Log_Printf("キー", "上下の書き込みの切り替えは一時停止中（p）にしてから押してください");
-    return;
-  }
-  Servo_SetSkipUnchangedTilt(!Servo_IsSkipUnchangedTilt());
-  Log_Printf("キー", "上下のサーボへの書き込み：%s（%s。省いた回数 %lu）",
-             Servo_IsSkipUnchangedTilt() ? "省く" : "省かない",
-             Servo_IsSkipUnchangedTilt() ? "上下の角度が今の値と同じなら PCA9685 へ書かない" : "今までどおり毎回書く",
-             (unsigned long)Servo_TiltWritesSkipped());
+  debugScanBehavior.request(tiltWithFirst);
 }
 
 // ------------------------ デバッグキー（ジャイロの測定）------------------------ //
@@ -421,10 +398,8 @@ static void HandleSerialKeys(void) {
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
       case 'n': RequestGyroSpin(); break;
-      case 'o': RequestDebugScan(false, false); break;
-      case 'i': RequestDebugScan(true, false); break;
-      case 'u': RequestDebugScan(false, true); break;
-      case 'k': ToggleSkipTiltWrite(); break;
+      case 'o': RequestDebugScan(false); break;
+      case 'u': RequestDebugScan(true); break;
       case 'h': TestStats_RequestSave(now); break;
       case 'x': TestStats_HandleClearKey(now); break;
       case '?': PrintKeyHelp(); break;
@@ -457,7 +432,6 @@ void setup() {
   randomSeed(esp_random());
 
   bool trackOk = Hal_Setup();
-  PrintServoChannels("起動");
   if (!trackOk) {
     Log_Printf("起動", "ライントラッキングセンサーが応答しません（起動は続けます）");
   }
@@ -500,7 +474,7 @@ void loop() {
     if (debugGyroSpinBehavior.isBusy()) {
       debugGyroSpinBehavior.abort("リモコン ▶", now);   // 測定（n）の最中は、一時停止を切り替えずに中断だけする
     } else if (debugScanBehavior.isBusy()) {
-      debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o・i・u）も同じ
+      debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o・u）も同じ
     } else {
       TogglePause("リモコン ▶", now);
     }
