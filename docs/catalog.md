@@ -72,4 +72,5 @@
 - 着手時は docs/specs/common_tof_checklist.md を先に確認する。
 - 状態：**着手（3.6-1。2026-10-24）**。2026-10-12 にソフトの事前確認（ビルドとコードの読み取り）。2026-10-21 までにセンサーの到着・
   P3 への配線・首の上への仮固定（線 13cm）。2026-10-24、ライブラリを lib/ に取り込み `IO_Read` に上限を付けた（本体からはまだ使わない）。
-  単体試験の環境 l8cx_init_time（experiments/vl53l8cx_build）をビルドした。未書き込み。
+  同日〜10-25、単体試験（experiments/vl53l8cx_build の l8cx_init_time・l8cx_ranging）：起動は成功（init 2,666ms）、静止中の測距は失敗 0。
+  首を振ると ToF のバスの失敗が続いて測距が止まる（原因を切り分け中。measurements.md）。
