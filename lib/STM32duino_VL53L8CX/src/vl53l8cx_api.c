@@ -501,6 +501,9 @@ uint8_t vl53l8cx_start_ranging(
   uint8_t cmd[] = {0x00, 0x03, 0x00, 0x00};
 
   status |= vl53l8cx_get_resolution(p_dev, &resolution);
+  if (status != (uint8_t)0) {
+    return status;  /* [Nova] 読み出しに失敗したら、残ったバッファの値で読み出しの大きさを決めないで戻る */
+  }
   p_dev->data_read_size = 0;
   p_dev->streamcount = 255;
 
@@ -684,6 +687,10 @@ uint8_t vl53l8cx_check_data_ready(
   uint8_t status = VL53L8CX_STATUS_OK;
 
   status |= VL53L8CX_RdMulti(&(p_dev->platform), 0x0, p_dev->temp_buffer, 4);
+  if (status != (uint8_t)0) {
+    *p_isReady = 0;  /* [Nova] 読み出しに失敗したら、残ったバッファで判定しないで「準備できていない」として戻る */
+    return status;
+  }
 
   if ((p_dev->temp_buffer[0] != p_dev->streamcount)
       && (p_dev->temp_buffer[0] != (uint8_t)255)
@@ -714,6 +721,9 @@ uint8_t vl53l8cx_get_ranging_data(
   uint32_t i, j, msize;
   status |= VL53L8CX_RdMulti(&(p_dev->platform), 0x0,
                              p_dev->temp_buffer, p_dev->data_read_size);
+  if (status != (uint8_t)0) {
+    return status;  /* [Nova] 読み出しに失敗したら、残ったバッファを解析しないで戻る */
+  }
   p_dev->streamcount = p_dev->temp_buffer[0];
   VL53L8CX_SwapBuffer(p_dev->temp_buffer, (uint16_t)p_dev->data_read_size);
 
