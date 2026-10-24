@@ -49,6 +49,11 @@
 #include "vl53l8cx_plugin_motion_indicator.h"
 #include "vl53l8cx_plugin_xtalk.h"
 
+// [Nova] IO_Read でレジスタのアドレスを送る回数の上限（元は成功するまで永久にくり返す）
+#ifndef NOVA_IO_READ_TX_TRIES
+#define NOVA_IO_READ_TX_TRIES 3
+#endif
+
 /* Class Declaration ---------------------------------------------------------*/
 class VL53L8CX {
   public:
@@ -115,6 +120,7 @@ class VL53L8CX {
       if (dev_i2c) {
         int status = 0;
         uint8_t buffer[2];
+        uint8_t tries = 0;  // [Nova] 送信の回数
         // Loop until the port is transmitted correctly
         do {
           dev_i2c->beginTransmission((uint8_t)((_dev.platform.address >> 1) & 0x7F));
@@ -132,21 +138,31 @@ class VL53L8CX {
           }
 #endif
           // End of fix
-        } while (status != 0);
+          tries++;  // [Nova]
+        } while (status != 0 && tries < NOVA_IO_READ_TX_TRIES);  // [Nova] 元は成功するまで永久にくり返す
+        if (status != 0) {
+          return 1;  // [Nova] 上限まで送って失敗したらエラーを返す
+        }
         uint32_t i = 0;
         if (size > DEFAULT_I2C_BUFFER_LEN) {
           while (i < size) {
             // If still more than DEFAULT_I2C_BUFFER_LEN bytes to go, DEFAULT_I2C_BUFFER_LEN,
             // else the remaining number of bytes
             uint8_t current_read_size = (size - i > DEFAULT_I2C_BUFFER_LEN ? DEFAULT_I2C_BUFFER_LEN : size - i);
-            dev_i2c->requestFrom(((uint8_t)((_dev.platform.address >> 1) & 0x7F)), current_read_size);
+            size_t got = dev_i2c->requestFrom(((uint8_t)((_dev.platform.address >> 1) & 0x7F)), current_read_size);  // [Nova] 読めたバイト数を受け取る
+            if (got < current_read_size) {
+              return 1;  // [Nova] 足りなければすぐにエラーを返す（元は読めるまで永久にくり返す）
+            }
             while (dev_i2c->available()) {
               p_values[i] = dev_i2c->read();
               i++;
             }
           }
         } else {
-          dev_i2c->requestFrom(((uint8_t)((_dev.platform.address >> 1) & 0x7F)), size);
+          size_t got = dev_i2c->requestFrom(((uint8_t)((_dev.platform.address >> 1) & 0x7F)), size);  // [Nova] 読めたバイト数を受け取る
+          if (got < size) {
+            return 1;  // [Nova] 足りなければすぐにエラーを返す
+          }
           while (dev_i2c->available()) {
             p_values[i] = dev_i2c->read();
             i++;

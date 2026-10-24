@@ -10,6 +10,7 @@ pulled in as dependencies and keep their own, separate licenses.
 | PCF8574 | `lib/PCF8574/` | Rob Tillaart | MIT | No |
 | Freenove_VK16K33_Lib_For_ESP32 | `lib/Freenove_VK16K33_Lib_For_ESP32/` | Freenove | Unlicense (public domain) | **Yes** — see below |
 | Freenove_WS2812_Lib_for_ESP32 | `lib/Freenove_WS2812_Lib_for_ESP32/` | Freenove | LGPL-3.0 | **Yes** — see below |
+| STM32duino VL53L8CX | `lib/STM32duino_VL53L8CX/` | STMicroelectronics (stm32duino) | 3-clause BSD | **Yes** — see below |
 | IRremoteESP8266 | fetched by PlatformIO (`lib_deps`, not vendored in `lib/`) | David Conran and contributors (crankyoldgit) | LGPL-2.1 | No |
 
 Each library's own `LICENSE`/`license.txt` file (kept in its folder) is the
@@ -36,6 +37,18 @@ device. What is sent on the bus is unchanged. The change is documented in
 [lib/Freenove_VK16K33_Lib_For_ESP32/NOVA_PATCH.md](lib/Freenove_VK16K33_Lib_For_ESP32/NOVA_PATCH.md)
 (one per library), and the modified lines are marked `[Nova]` in the
 source. Each library remains under its original license.
+
+## STM32duino VL53L8CX — modifications
+
+The vendored copy under `lib/STM32duino_VL53L8CX/` is the 2.1.0 release
+(tag `2.1.0`, commit a93a9d6). Upstream `IO_Read()` waits forever when the
+sensor does not answer; the patch bounds the register-address retry loop
+and returns an error as soon as `requestFrom()` delivers fewer bytes than
+requested. What is sent on the bus is otherwise unchanged. The change is
+documented in
+[lib/STM32duino_VL53L8CX/NOVA_PATCH.md](lib/STM32duino_VL53L8CX/NOVA_PATCH.md),
+and the modified lines are marked `[Nova]` in the source. It remains under
+the original 3-clause BSD license.
 
 ## Pin numbers, I2C addresses and similar hardware facts
 
