@@ -8,6 +8,8 @@
 //   r … 4×4 と 8×8 を切り替える（stop_ranging → set_resolution → 頻度の設定 → start_ranging）
 //   s … ここまでの集計を出して、数え直す
 //   n … 首を本体のキー u と同じ動き（正面 → 左＋上 → 右 → 正面）で 50 往復。終わったら集計を出す
+//       電池が 6.0V 未満なら受け付けない（サーボの電源は電池から。本体の hal_battery と同じ読み方）
+//   b … 電池の電圧だけを出す（起動時・キー s・キー n の開始時にも出す）
 // モーターは動かさない：PCA9685 のモーターのチャンネルには何も書かない
 //   （起動時の setupSingleDevice のソフトウェアリセットで、全チャンネルが止まった状態になる。本体と同じ）
 // delay() は使わない（ライブラリの中の待ちは除く）
@@ -15,6 +17,7 @@
 #include <Wire.h>
 #include <PCA9685.h>
 #include <vl53l8cx.h>
+#include "esp_adc_cal.h"
 
 // ---- ToF（第2バス）----
 #define PIN_TOF_SDA         26        // ESP32 基板のヘッダー P3-10
@@ -48,6 +51,13 @@
 #define NECK_SETTLE_PER_DEG_MS 2
 #define NECK_DWELL_MS       300       // 各向きで止まっている時間（本体の超音波3回の測距の代わり。試験用）
 #define NECK_ROUNDS         50        // 往復の回数
+
+// ---- 電池（本体の src/hal/hal_battery.cpp・hal_pins.h と同じピン・換算）----
+#define PIN_BATTERY            32
+#define BATTERY_DEFAULT_VREF   1100   // 公式サンプルと同じ
+#define BATTERY_DIVIDER_RATIO  4.0f   // 分圧比（公式サンプルの batteryCoefficient）
+#define BATTERY_SAMPLE_COUNT   5
+#define BATTERY_SERVO_MIN_V    6.0f   // これ未満なら、サーボに電池の電源が来ていない（または低い）とみなす（試験用）
 
 static VL53L8CX sensor(&Wire1, -1);
 static PCA9685 pca;
@@ -90,6 +100,35 @@ static void PrintStats(const char *label) {
                 (unsigned long)mn, (unsigned long)avg, (unsigned long)st.maxUs,
                 (unsigned long)st.readyFail, (unsigned long)st.dataFail,
                 (unsigned long)(pca.nova_i2c_fail - st.pcaFail0), (unsigned long)(pca.nova_i2c_total - st.pcaTotal0));
+}
+
+// ---- 電池 ----
+static esp_adc_cal_characteristics_t adcChars;
+
+static void BatterySetup(void) {
+  analogSetWidth(12);
+  analogSetPinAttenuation(PIN_BATTERY, ADC_11db);
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, BATTERY_DEFAULT_VREF, &adcChars);
+}
+
+static float BatteryReadVoltage(void) {
+  long sum = 0;
+  for (int i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
+    sum += analogRead(PIN_BATTERY);
+  }
+  uint32_t mv = esp_adc_cal_raw_to_voltage(sum / BATTERY_SAMPLE_COUNT, &adcChars);
+  return (mv / 1000.0f) * BATTERY_DIVIDER_RATIO;
+}
+
+// 電圧を1行で出す。6.0V 未満なら注意も出し、false を返す
+static bool PrintBattery(const char *label) {
+  float v = BatteryReadVoltage();
+  Serial.printf("[bat] %s %.2fV\n", label, v);
+  if (v < BATTERY_SERVO_MIN_V) {
+    Serial.println("[bat] 電池の電源なし（または低い）。サーボは動かない可能性");
+    return false;
+  }
+  return true;
 }
 
 // ---- 首 ----
@@ -296,10 +335,21 @@ static void HandleKey(char k) {
       break;
     case 's':
       PrintStats("stats");
+      PrintBattery("stats");
       ResetStats();
       break;
     case 'n':
-      if (!neckRunning) NeckStart();
+      if (neckRunning) {
+        break;
+      }
+      if (PrintBattery("neck")) {
+        NeckStart();
+      } else {
+        Serial.printf("[neck] 開始しない：電池が %.1fV 未満\n", BATTERY_SERVO_MIN_V);
+      }
+      break;
+    case 'b':
+      PrintBattery("now");
       break;
     default:
       break;
@@ -312,7 +362,9 @@ void setup() {
   while (millis() - t0 < 500) {
     // シリアルモニタがつながるのを少し待つ
   }
-  Serial.println("[tof] l8cx_ranging 開始（キー g r s n）");
+  Serial.println("[tof] l8cx_ranging 開始（キー g r s n b）");
+  BatterySetup();
+  PrintBattery("boot");
   PcaSetup();
   TofSetup();
   ResetStats();
