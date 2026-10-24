@@ -1,7 +1,7 @@
-// VL53L8CX：起動時の begin()・init() の戻り値とかかった時間を測る（スプリント3.6-1。単体試験）
+// VL53L8CX：起動時の begin()・is_alive()・init() の戻り値とかかった時間を測る（スプリント3.6-1。単体試験）
 // ライブラリは Nova の lib/STM32duino_VL53L8CX（IO_Read に上限を付けた版。NOVA_PATCH.md）
 // 見ること：
-//   - begin・init の戻り値（0＝成功）と時間（ms）
+//   - begin・is_alive・init の戻り値（0＝成功）と時間（ms）
 //   - そのあと「loop に到達」が1秒ごとに出るか（センサーが応答しなくても止まらないこと）
 // 試験用なので millis() で待つ。ライブラリの中には delay() がある（init の中の待ち）
 #include <Arduino.h>
@@ -33,6 +33,14 @@ void setup() {
   int beginStatus = sensor.begin();     // アドレスは既定（8ビットの書き方で 0x52＝7ビットで 0x29）
   uint32_t beginMs = millis() - tb;
   Serial.printf("[tof] begin=%d 時間=%lums\n", beginStatus, (unsigned long)beginMs);
+
+  // センサーがいるかを確かめる（デバイスID 0xF0・リビジョン 0x0C なら alive=1）。
+  // alive=0 でも、試験のため init() は呼ぶ（失敗で戻るまでの時間を見る）
+  uint32_t ta = millis();
+  uint8_t alive = 0;
+  uint8_t aliveStatus = sensor.is_alive(&alive);
+  uint32_t aliveMs = millis() - ta;
+  Serial.printf("[tof] is_alive=%u alive=%u 時間=%lums\n", aliveStatus, alive, (unsigned long)aliveMs);
 
   uint32_t ti = millis();
   uint8_t initStatus = sensor.init();   // ここでファームウェア（約84KB）を送る
