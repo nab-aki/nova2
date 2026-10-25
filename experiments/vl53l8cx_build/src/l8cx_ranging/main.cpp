@@ -14,6 +14,7 @@
 //   v … 上下だけを 50 往復（水平 ⇔ 水平＋数字。数字なしは +15°）。左右は正面のまま
 //   h … サーボの PWM を止めて測り続ける（手で首を動かす・線を揺らす）。Enter で終わり、首を正面へ戻す。失敗した時刻をその場で出す
 //   c … Wire1 の速さを 400kHz と 100kHz で切り替える（今の値を出す）
+//   p … 首の上下だけを水平からの角度に動かして止めたままにする。例 p20（水平に戻すのは p か p0）。左右は正面。範囲外（-8〜+42°）なら実行しない。そのあと G で表を見る
 //   x … 首の試験を中断して集計を出す
 //   b … 電池の電圧だけを出す（起動時・キー s・首の試験の開始時にも出す）
 //   n・a・v は電池が 6.0V 未満なら受け付けない（サーボの電源は電池から。本体の hal_battery と同じ読み方）
@@ -940,7 +941,7 @@ static void RunNumberCmd(char cmd, bool hasNum, int num) {
     Serial.println("[neck] 試験中は受け付けない（x で中断）");
     return;
   }
-  int off = hasNum ? num : (cmd == 'a' ? 0 : TILT_TEST_DEFAULT);
+  int off = hasNum ? num : (cmd == 'v' ? TILT_TEST_DEFAULT : 0);   // a・p は数字なし＝0（水平）
   int tilt = SERVO2_LEVEL_DEG + off;
   if (tilt < SERVO2_MIN_DEG || tilt > SERVO2_MAX_DEG || (cmd == 'v' && off == 0)) {
     Serial.printf("[neck] %c%+d は実行しない：上下は水平から %+d〜%+d°（servo2 %d〜%d°、水平 %d°、上が +）%s\n", cmd, off,
@@ -950,6 +951,12 @@ static void RunNumberCmd(char cmd, bool hasNum, int num) {
   }
   if (!PrintBattery("neck")) {
     Serial.printf("[neck] 開始しない：電池が %.1fV 未満\n", BATTERY_SERVO_MIN_V);
+    return;
+  }
+  if (cmd == 'p') {
+    // 上下だけを動かして止めたままにする（左右は正面）。動いている間と止まってから安定するまでの測距値は無効なので、待ってから G
+    uint32_t settle = NeckMove(SERVO1_FRONT_DEG, tilt);
+    Serial.printf("[neck] p%+d：上下 水平から %+d°（servo2 %d°）左右は正面。%lums ほど待ってから G\n", off, off, tilt, (unsigned long)(settle + NECK_DWELL_MS));
     return;
   }
   NeckStart(cmd == 'a' ? MODE_A : MODE_V, off);
@@ -1009,6 +1016,7 @@ static void HandleKey(char k) {
       break;
     case 'a':
     case 'v':
+    case 'p':
       pendingCmd = k;
       numLen = 0;
       pendingMs = millis();
@@ -1065,7 +1073,7 @@ void setup() {
   while (millis() - t0 < 500) {
     // シリアルモニタがつながるのを少し待つ
   }
-  Serial.println("[tof] l8cx_ranging 開始（キー g G r s n a v h c x b）");
+  Serial.println("[tof] l8cx_ranging 開始（キー g G r s n a v p h c x b）");
   BatterySetup();
   PrintBattery("boot");
   PcaSetup();
