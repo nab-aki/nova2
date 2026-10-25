@@ -107,6 +107,29 @@ static volatile uint8_t curBus = 0;    // いま通信しているバス（0＝W
 static char logBuf[128];
 static uint16_t logLen = 0;
 
+// ---- 最初の失敗の記録 ----
+// 測距が順調な状態（開始直後・やり直しが成功した直後）から、最初にエラーが出た瞬間を残す。
+// エラー＝Wire1 のエラーの行／check_data_ready・get_ranging_data の失敗。エラーなしでフレームが止まったときは、見つけた時点で残す
+enum FirstFailSrc { FF_BUS, FF_READY, FF_DATA, FF_STALL };
+struct FirstFail {
+  uint32_t tMs;          // 集計の開始からの時刻
+  int16_t pan, tilt;     // 推定の角度（正面・水平から。手動のときは不明）
+  uint8_t phase;
+  uint8_t src;
+  uint8_t status;
+  bool fromRecovery;     // 測った起点が「やり直しの終了」か「集計の開始」か
+  uint32_t durMs;        // 起点から最初の失敗まで（FF_STALL は最後のフレームまで）
+  uint32_t frames;       // その間のフレーム数
+};
+static FirstFail ff;
+static bool ffValid = false;            // ff に今の期間の記録がある
+static bool ffPrinted = false;          // [rec] に出し済み
+static volatile bool ffPending = false; // 順調な状態で、最初の失敗を待っている
+static uint32_t healthyStartMs = 0;
+static uint32_t healthyFrames0 = 0;
+static bool healthyFromRecovery = false;
+static void CaptureFirstFail(uint32_t nowMs, uint8_t src, uint8_t status);
+
 // 通信の間だけ curBus を切り替える
 struct BusScope {
   uint8_t prev;
@@ -115,6 +138,9 @@ struct BusScope {
 };
 
 static void LogClassify(const char *line) {
+  if (curBus == 1 && ffPending) {
+    CaptureFirstFail(millis(), FF_BUS, 0);   // 行が出た瞬間（通信の途中）が最初の失敗
+  }
   // 例 "[ 12345][E][Wire.cpp:513] requestFrom(): i2cRead returned Error -1" → "requestFrom(): i2cRead returned Error -1"
   // ESP-IDF の行 "E (1234) i2c: ..." → "i2c: ..."
   const char *body = strstr(line, "] ");
@@ -224,6 +250,10 @@ struct Stats {
   uint32_t recRestartFail;
   uint32_t recReinit;     // init からやり直した回数（リセットの疑い）
   uint32_t recPrinted;
+  uint32_t okN;           // 測れていた時間（やり直しの終了 → 最初の失敗）の回数・合計・最小・最大
+  uint64_t okSum;
+  uint32_t okMin, okMax;
+  uint32_t ok0Ms;         // 集計の開始 → 最初の失敗（UINT32_MAX＝まだ失敗なし）
   FailRec rec[FAIL_REC_MAX];
   uint32_t recCount;
 };
@@ -258,10 +288,23 @@ static bool PrintBattery(const char *label) {
   return true;
 }
 
+// 「測れていた時間」の起点を決める（集計の開始・やり直しの成功）。測距中でなければ待たない
+static void HealthyBegin(uint32_t nowMs, bool fromRecovery) {
+  healthyStartMs = nowMs;
+  healthyFrames0 = st.frames;
+  healthyFromRecovery = fromRecovery;
+  ffValid = false;
+  ffPrinted = false;
+  ffPending = tofOk;
+}
+
 static void ResetStats(void) {
   memset(&st, 0, sizeof(st));
   st.minUs = UINT32_MAX;
+  st.okMin = UINT32_MAX;
+  st.ok0Ms = UINT32_MAX;
   st.startMs = millis();
+  HealthyBegin(st.startMs, false);
   st.pcaTotal0 = pca.nova_i2c_total;
   st.pcaFail0 = pca.nova_i2c_fail;
   st.batV = BatteryReadVoltage();
@@ -326,6 +369,13 @@ static void PrintStats(const char *label) {
   Serial.printf("[tof]  やり直し 止まった=%lu is_alive失敗=%lu start成功=%lu start失敗=%lu init=%lu\n",
                 (unsigned long)st.recStall, (unsigned long)st.recAliveFail, (unsigned long)st.recRestartOk,
                 (unsigned long)st.recRestartFail, (unsigned long)st.recReinit);
+  if (st.okN > 0) {
+    Serial.printf("[tof]  測れていた時間（やり直しの終了 → 最初の失敗） %lu回 min=%lums avg=%lums max=%lums\n", (unsigned long)st.okN,
+                  (unsigned long)st.okMin, (unsigned long)(st.okSum / st.okN), (unsigned long)st.okMax);
+  }
+  if (st.ok0Ms != UINT32_MAX) {
+    Serial.printf("[tof]  集計の開始 → 最初の失敗 %lums\n", (unsigned long)st.ok0Ms);
+  }
   uint32_t n = min(st.recCount, (uint32_t)FAIL_REC_PRINT);
   for (uint32_t i = 0; i < n; i++) {
     const FailRec &r = st.rec[i];
@@ -405,6 +455,36 @@ static Phase NeckPhase(uint32_t nowMs, int *panRel, int *tiltRel) {
   return ph;
 }
 
+// 最初の失敗を残す（順調な状態から最初の1回だけ。あとは何もしない）。時刻・推定の角度・段階・測れていた時間とフレーム数
+static void CaptureFirstFail(uint32_t nowMs, uint8_t src, uint8_t status) {
+  if (!ffPending) {
+    return;
+  }
+  ffPending = false;
+  int panRel, tiltRel;
+  Phase ph = NeckPhase(nowMs, &panRel, &tiltRel);
+  uint32_t endMs = (src == FF_STALL && lastFrameMs >= healthyStartMs) ? lastFrameMs : nowMs;   // 止まった場合は最後のフレームまで
+  ff.tMs = nowMs - st.startMs;
+  ff.pan = (int16_t)panRel;
+  ff.tilt = (int16_t)tiltRel;
+  ff.phase = (uint8_t)ph;
+  ff.src = src;
+  ff.status = status;
+  ff.fromRecovery = healthyFromRecovery;
+  ff.durMs = endMs - healthyStartMs;
+  ff.frames = st.frames - healthyFrames0;
+  ffValid = true;
+  ffPrinted = false;
+  if (healthyFromRecovery) {
+    st.okN++;
+    st.okSum += ff.durMs;
+    if (ff.durMs < st.okMin) st.okMin = ff.durMs;
+    if (ff.durMs > st.okMax) st.okMax = ff.durMs;
+  } else {
+    st.ok0Ms = ff.durMs;
+  }
+}
+
 // 本体と同じ PCA9685 の設定（ソフトウェアリセット → ALLCALL を切る → 50Hz）
 static void PcaSetup(void) {
   BusScope bus(0);
@@ -429,6 +509,7 @@ static uint32_t handLastPrintMs = 0;
 static uint32_t handSuppressed = 0;
 
 static void RecordFail(uint32_t nowMs, FailKind kind, uint8_t status, uint32_t busLines) {
+  CaptureFirstFail(nowMs, kind == FK_READY ? FF_READY : FF_DATA, status);   // Wire1 のエラーの行が先に出ていれば、そちらが記録済み
   if (kind == FK_READY) {
     st.readyFail++;
   } else {
@@ -514,46 +595,72 @@ static void TofSetup(void) {
   }
 }
 
+// 最初の失敗（と、その前に測れていた時間）を出す（改行なし）
+static void PrintFirstFail(void) {
+  static const char *const SRC_NAMES[] = {"W1エラー", "ready失敗", "data失敗", "エラーなしで停止"};
+  if (ff.pan == ANGLE_UNKNOWN) {
+    Serial.printf("／最初の失敗 t=%.3fs %s st=%u 角度不明 %s", ff.tMs / 1000.0f, SRC_NAMES[ff.src], ff.status, PHASE_NAMES[ff.phase]);
+  } else {
+    Serial.printf("／最初の失敗 t=%.3fs %s st=%u 左右%+d 上下%+d %s", ff.tMs / 1000.0f, SRC_NAMES[ff.src], ff.status,
+                  ff.pan, ff.tilt, PHASE_NAMES[ff.phase]);
+  }
+  Serial.printf("／測れていた %lums frames=%lu（%s）", (unsigned long)ff.durMs, (unsigned long)ff.frames,
+                ff.fromRecovery ? "前のやり直しの終了から" : "開始から");
+}
+
 // 測距が止まったときに確かめて、やり直す
 // is_alive → stop_ranging → get_resolution。解像度が読めない・違う＝設定が消えた（リセットの疑い）→ init から。そのあと start_ranging
 static void TofRecover(uint32_t nowMs) {
   BusScope bus(1);
   lastRecoverMs = nowMs;
   st.recStall++;
-  int panRel, tiltRel;
-  Phase ph = NeckPhase(nowMs, &panRel, &tiltRel);
+  CaptureFirstFail(nowMs, FF_STALL, 0);   // エラーが出ないまま止まった場合（エラーがあれば、すでに記録済みで何もしない）
   bool print = st.recPrinted < REC_PRINT_MAX;
   if (print) {
     st.recPrinted++;
-    if (panRel == ANGLE_UNKNOWN) {
-      Serial.printf("[rec] t=%.3fs 測距が止まった（最後のフレームから %lums）%s\n", (nowMs - st.startMs) / 1000.0f,
-                    (unsigned long)(nowMs - lastFrameMs), PHASE_NAMES[ph]);
-    } else {
-      Serial.printf("[rec] t=%.3fs 測距が止まった（最後のフレームから %lums）左右%+d 上下%+d %s\n", (nowMs - st.startMs) / 1000.0f,
-                    (unsigned long)(nowMs - lastFrameMs), panRel, tiltRel, PHASE_NAMES[ph]);
+    Serial.printf("[rec] t=%.3fs 測距が止まった（最後のフレームから %lums）", (nowMs - st.startMs) / 1000.0f,
+                  (unsigned long)(nowMs - lastFrameMs));
+    if (ffValid && !ffPrinted) {
+      PrintFirstFail();
+      Serial.printf("／見つけるまで +%lums", (unsigned long)(nowMs - st.startMs - ff.tMs));
     }
+    Serial.println();
   }
+  ffPrinted = true;   // やり直しに失敗してくり返すときは、最初の失敗を2度出さない
   uint8_t alive = 0;
+  uint32_t t0 = millis();
   uint8_t s = sensor.is_alive(&alive);
+  uint32_t msAlive = millis() - t0;
   if (s != 0 || alive == 0) {
     st.recAliveFail++;
     tofOk = false;
-    if (print) Serial.printf("[rec]  is_alive=%u alive=%u：応答なし。%dms 後にまた確かめる\n", s, alive, TOF_RECOVER_RETRY_MS);
+    if (print) Serial.printf("[rec]  is_alive=%u alive=%u(%lums)：応答なし。%dms 後にまた確かめる\n", s, alive, (unsigned long)msAlive, TOF_RECOVER_RETRY_MS);
     return;
   }
+  t0 = millis();
   uint8_t sStop = sensor.stop_ranging();
+  uint32_t msStop = millis() - t0;
   uint8_t res = 0xFF;
+  t0 = millis();
   uint8_t sRes = sensor.get_resolution(&res);
+  uint32_t msRes = millis() - t0;
   bool lost = (sRes != 0 || res != resolution);
   uint8_t sInit = 0;
-  uint32_t initMs = 0;
+  uint32_t msInit = 0;
   if (lost) {
     st.recReinit++;
-    uint32_t t0 = millis();
+    t0 = millis();
     sInit = sensor.init();
-    initMs = millis() - t0;
+    msInit = millis() - t0;
   }
-  bool ok = (sInit == 0) && TofConfigureAndStart(resolution, false);
+  uint32_t msStart = 0;
+  bool ok = false;
+  if (sInit == 0) {
+    t0 = millis();
+    ok = TofConfigureAndStart(resolution, false);
+    msStart = millis() - t0;
+  }
+  uint32_t endMs = millis();
   tofOk = ok;
   if (ok) {
     st.recRestartOk++;
@@ -561,14 +668,18 @@ static void TofRecover(uint32_t nowMs) {
     st.recRestartFail++;
   }
   if (print) {
-    Serial.printf("[rec]  is_alive=0 stop=%u get_resolution=%u(%u) %s", sStop, sRes, res,
-                  lost ? "→ 設定が消えた（リセットの疑い）" : "→ 設定は残っている");
+    Serial.printf("[rec]  is_alive=0(%lums) stop=%u(%lums) get_resolution=%u(%u)(%lums) %s", (unsigned long)msAlive, sStop,
+                  (unsigned long)msStop, sRes, res, (unsigned long)msRes, lost ? "→ 設定が消えた（リセットの疑い）" : "→ 設定は残っている");
     if (lost) {
-      Serial.printf(" init=%u %lums", sInit, (unsigned long)initMs);
+      Serial.printf(" init=%u(%lums)", sInit, (unsigned long)msInit);
     }
-    Serial.printf(" → start %s\n", ok ? "成功" : "失敗");
+    Serial.printf(" start %s(%lums) 終了 t=%.3fs 合計%lums\n", ok ? "成功" : "失敗", (unsigned long)msStart,
+                  (endMs - st.startMs) / 1000.0f, (unsigned long)(endMs - nowMs));
   }
-  lastRecoverMs = millis();
+  lastRecoverMs = endMs;
+  if (ok) {
+    HealthyBegin(endMs, true);   // 次の最初の失敗までの時間をここから測る
+  }
 }
 
 static bool printTableNext = false;
