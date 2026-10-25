@@ -80,6 +80,12 @@
 #define BATTERY_SAMPLE_COUNT   5
 #define BATTERY_SERVO_MIN_V    6.0f   // これ未満なら、サーボに電池の電源が来ていない（または低い）とみなす（試験用）
 
+// 時刻の差。基準がいまより新しいとき（loop の先頭で取った now のあとに、キー処理が基準を millis() で更新した場合）は 0 にする
+// （符号なしの引き算が桁あふれして 4294967 秒などが出るのを防ぐ）
+static inline uint32_t Since(uint32_t now, uint32_t base) {
+  return (now >= base) ? (now - base) : 0;
+}
+
 static VL53L8CX sensor(&Wire1, -1);
 static PCA9685 pca;
 static VL53L8CX_ResultsData results;   // 約1.4KB。スタックに置かない
@@ -326,7 +332,7 @@ static void PrintStats(const char *label) {
   uint32_t mn = st.frames ? st.minUs : 0;
   Serial.printf("[tof] %s res=%s i2c=%lukHz frames=%lu sec=%.1f us min=%lu avg=%lu max=%lu fail ready=%lu data=%lu pca=%lu/%lu\n",
                 label, resolution == VL53L8CX_RESOLUTION_8X8 ? "8x8" : "4x4", (unsigned long)(tofHz / 1000),
-                (unsigned long)st.frames, (millis() - st.startMs) / 1000.0f,
+                (unsigned long)st.frames, Since(millis(), st.startMs) / 1000.0f,
                 (unsigned long)mn, (unsigned long)avg, (unsigned long)st.maxUs,
                 (unsigned long)st.readyFail, (unsigned long)st.dataFail,
                 (unsigned long)(pca.nova_i2c_fail - st.pcaFail0), (unsigned long)(pca.nova_i2c_total - st.pcaTotal0));
@@ -433,7 +439,7 @@ static Phase NeckPhase(uint32_t nowMs, int *panRel, int *tiltRel) {
     *tiltRel = ANGLE_UNKNOWN;
     return PH_HAND;
   }
-  uint32_t el = nowMs - moveStartMs;
+  uint32_t el = Since(nowMs, moveStartMs);
   int pan = panDeg;
   int tilt = tiltDeg;
   Phase ph = PH_AFTER;
@@ -464,14 +470,14 @@ static void CaptureFirstFail(uint32_t nowMs, uint8_t src, uint8_t status) {
   int panRel, tiltRel;
   Phase ph = NeckPhase(nowMs, &panRel, &tiltRel);
   uint32_t endMs = (src == FF_STALL && lastFrameMs >= healthyStartMs) ? lastFrameMs : nowMs;   // 止まった場合は最後のフレームまで
-  ff.tMs = nowMs - st.startMs;
+  ff.tMs = Since(nowMs, st.startMs);
   ff.pan = (int16_t)panRel;
   ff.tilt = (int16_t)tiltRel;
   ff.phase = (uint8_t)ph;
   ff.src = src;
   ff.status = status;
   ff.fromRecovery = healthyFromRecovery;
-  ff.durMs = endMs - healthyStartMs;
+  ff.durMs = Since(endMs, healthyStartMs);
   ff.frames = st.frames - healthyFrames0;
   ffValid = true;
   ffPrinted = false;
@@ -529,7 +535,7 @@ static void RecordFail(uint32_t nowMs, FailKind kind, uint8_t status, uint32_t b
   }
   if (st.recCount < FAIL_REC_MAX) {
     FailRec &r = st.rec[st.recCount];
-    r.tMs = nowMs - st.startMs;
+    r.tMs = Since(nowMs, st.startMs);
     r.pan = (int16_t)panRel;
     r.tilt = (int16_t)tiltRel;
     r.phase = (uint8_t)ph;
@@ -540,8 +546,8 @@ static void RecordFail(uint32_t nowMs, FailKind kind, uint8_t status, uint32_t b
   st.recCount++;
   // 手で動かす試験では、失敗した時刻をその場で出す（続けて出たものは次の行にまとめる）
   if (mode == MODE_H) {
-    if (nowMs - handLastPrintMs >= HAND_PRINT_MIN_MS) {
-      Serial.printf("[hand] 失敗 t=%.3fs %s st=%u バス%lu（前の行からの間に +%lu 件）\n", (nowMs - st.startMs) / 1000.0f,
+    if (Since(nowMs, handLastPrintMs) >= HAND_PRINT_MIN_MS) {
+      Serial.printf("[hand] 失敗 t=%.3fs %s st=%u バス%lu（前の行からの間に +%lu 件）\n", Since(nowMs, st.startMs) / 1000.0f,
                     kind == FK_READY ? "ready" : "data", status, (unsigned long)busLines, (unsigned long)handSuppressed);
       handLastPrintMs = nowMs;
       handSuppressed = 0;
@@ -618,11 +624,11 @@ static void TofRecover(uint32_t nowMs) {
   bool print = st.recPrinted < REC_PRINT_MAX;
   if (print) {
     st.recPrinted++;
-    Serial.printf("[rec] t=%.3fs 測距が止まった（最後のフレームから %lums）", (nowMs - st.startMs) / 1000.0f,
-                  (unsigned long)(nowMs - lastFrameMs));
+    Serial.printf("[rec] t=%.3fs 測距が止まった（最後のフレームから %lums）", Since(nowMs, st.startMs) / 1000.0f,
+                  (unsigned long)Since(nowMs, lastFrameMs));
     if (ffValid && !ffPrinted) {
       PrintFirstFail();
-      Serial.printf("／見つけるまで +%lums", (unsigned long)(nowMs - st.startMs - ff.tMs));
+      Serial.printf("／見つけるまで +%lums", (unsigned long)Since(Since(nowMs, st.startMs), ff.tMs));
     }
     Serial.println();
   }
@@ -637,14 +643,22 @@ static void TofRecover(uint32_t nowMs) {
     if (print) Serial.printf("[rec]  is_alive=%u alive=%u(%lums)：応答なし。%dms 後にまた確かめる\n", s, alive, (unsigned long)msAlive, TOF_RECOVER_RETRY_MS);
     return;
   }
-  t0 = millis();
-  uint8_t sStop = sensor.stop_ranging();
-  uint32_t msStop = millis() - t0;
+  // キー h（手で動かす）のときだけ、stop_ranging と get_resolution を飛ばして、すぐ init からやり直す（短くする）。a・v・n は比べるため変えない
+  const bool quick = (mode == MODE_H);
+  uint8_t sStop = 0;
+  uint32_t msStop = 0;
   uint8_t res = 0xFF;
-  t0 = millis();
-  uint8_t sRes = sensor.get_resolution(&res);
-  uint32_t msRes = millis() - t0;
-  bool lost = (sRes != 0 || res != resolution);
+  uint8_t sRes = 0;
+  uint32_t msRes = 0;
+  if (!quick) {
+    t0 = millis();
+    sStop = sensor.stop_ranging();
+    msStop = millis() - t0;
+    t0 = millis();
+    sRes = sensor.get_resolution(&res);
+    msRes = millis() - t0;
+  }
+  bool lost = quick || (sRes != 0 || res != resolution);
   uint8_t sInit = 0;
   uint32_t msInit = 0;
   if (lost) {
@@ -668,13 +682,17 @@ static void TofRecover(uint32_t nowMs) {
     st.recRestartFail++;
   }
   if (print) {
-    Serial.printf("[rec]  is_alive=0(%lums) stop=%u(%lums) get_resolution=%u(%u)(%lums) %s", (unsigned long)msAlive, sStop,
-                  (unsigned long)msStop, sRes, res, (unsigned long)msRes, lost ? "→ 設定が消えた（リセットの疑い）" : "→ 設定は残っている");
+    if (quick) {
+      Serial.printf("[rec]  is_alive=0(%lums) stop・get_resolution は省略（h）→ すぐ init", (unsigned long)msAlive);
+    } else {
+      Serial.printf("[rec]  is_alive=0(%lums) stop=%u(%lums) get_resolution=%u(%u)(%lums) %s", (unsigned long)msAlive, sStop,
+                    (unsigned long)msStop, sRes, res, (unsigned long)msRes, lost ? "→ 設定が消えた（リセットの疑い）" : "→ 設定は残っている");
+    }
     if (lost) {
       Serial.printf(" init=%u(%lums)", sInit, (unsigned long)msInit);
     }
     Serial.printf(" start %s(%lums) 終了 t=%.3fs 合計%lums\n", ok ? "成功" : "失敗", (unsigned long)msStart,
-                  (endMs - st.startMs) / 1000.0f, (unsigned long)(endMs - nowMs));
+                  Since(endMs, st.startMs) / 1000.0f, (unsigned long)Since(endMs, nowMs));
   }
   lastRecoverMs = endMs;
   if (ok) {
@@ -707,11 +725,11 @@ static void TofUpdate(uint32_t nowMs) {
     return;
   }
   // 止まっていたら確かめる（やり直しに失敗したあとも、間隔をあけて続ける）
-  if (nowMs - lastFrameMs >= TOF_STALL_MS && nowMs - lastRecoverMs >= TOF_RECOVER_RETRY_MS) {
+  if (Since(nowMs, lastFrameMs) >= TOF_STALL_MS && Since(nowMs, lastRecoverMs) >= TOF_RECOVER_RETRY_MS) {
     TofRecover(nowMs);
     return;
   }
-  if (!tofOk || nowMs - lastPollMs < TOF_POLL_MS) {
+  if (!tofOk || Since(nowMs, lastPollMs) < TOF_POLL_MS) {
     return;
   }
   BusScope bus(1);
@@ -828,7 +846,7 @@ static void NeckFinish(const char *label) {
 }
 
 static void NeckUpdate(uint32_t nowMs) {
-  if ((mode != MODE_N && mode != MODE_A && mode != MODE_V) || nowMs - neckStepStartMs < neckWaitMs) {
+  if ((mode != MODE_N && mode != MODE_A && mode != MODE_V) || Since(nowMs, neckStepStartMs) < neckWaitMs) {
     return;
   }
   if (neckRound >= NECK_ROUNDS) {   // 最後の向きの待ちが終わってから集計する
@@ -870,11 +888,11 @@ static void HandStart(void) {
 }
 
 static void HandUpdate(uint32_t nowMs) {
-  if (mode != MODE_H || nowMs - handStatusMs < HAND_STATUS_MS) {
+  if (mode != MODE_H || Since(nowMs, handStatusMs) < HAND_STATUS_MS) {
     return;
   }
   handStatusMs = nowMs;
-  Serial.printf("[hand] t=%.0fs frames=%lu 失敗=%lu\n", (nowMs - st.startMs) / 1000.0f, (unsigned long)st.frames,
+  Serial.printf("[hand] t=%.0fs frames=%lu 失敗=%lu\n", Since(nowMs, st.startMs) / 1000.0f, (unsigned long)st.frames,
                 (unsigned long)(st.readyFail + st.dataFail));
 }
 
@@ -988,7 +1006,7 @@ static void HandleKey(char k) {
 static void HandleChar(char c, uint32_t nowMs) {
   // 手で動かす試験の間は Enter だけを見る
   if (mode == MODE_H) {
-    if ((c == '\r' || c == '\n') && nowMs - handStartMs >= HAND_ENTER_IGNORE_MS) {
+    if ((c == '\r' || c == '\n') && Since(nowMs, handStartMs) >= HAND_ENTER_IGNORE_MS) {
       NeckFinish("hand");
     }
     return;
@@ -1027,11 +1045,11 @@ void setup() {
 }
 
 void loop() {
-  uint32_t now = millis();
   while (Serial.available() > 0) {
-    HandleChar((char)Serial.read(), now);
+    HandleChar((char)Serial.read(), millis());
   }
-  if (pendingCmd != 0 && now - pendingMs >= KEY_NUMBER_TIMEOUT_MS) {
+  uint32_t now = millis();   // キー処理（ResetStats など）のあとに取る。先に取ると、基準の時刻より古い now になる
+  if (pendingCmd != 0 && Since(now, pendingMs) >= KEY_NUMBER_TIMEOUT_MS) {
     FinishPending();
   }
   NeckUpdate(now);
