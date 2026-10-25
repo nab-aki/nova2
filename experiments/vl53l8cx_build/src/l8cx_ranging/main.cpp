@@ -4,7 +4,8 @@
 // 起動時：is_alive → init → 測距の頻度を設定 → 解像度 8×8 → start_ranging。どれかが失敗したら、その旨を出して測距しない
 // 測距：check_data_ready が真のときだけ get_ranging_data を呼び、かかった時間（µs）と失敗を数える
 // キー（シリアルに1文字送る。a・v は数字を続けて Enter）：
-//   g … 距離（mm）と区画の状態（target_status）を1回だけ表で出す
+//   g … 距離（mm）と区画の状態（target_status）を1回だけ表で出す（生の表。列＝上下、行＝左右）
+//   G … 同じ値を Nova の向き（後ろから前を見た見た目。上下・左右のラベル付き）で出す
 //   r … 4×4 と 8×8 を切り替える（stop_ranging → set_resolution → 頻度の設定 → start_ranging）
 //   s … ここまでの集計を出して、数え直す（試験中は数え直さない）
 //   n … 首を本体のキー u と同じ動き（正面 → 左＋上 → 右 → 正面）で 50 往復。終わったら集計を出す
@@ -41,7 +42,7 @@
 #define TOF_POLL_MS         5         // check_data_ready を呼ぶ間隔
 #define TOF_STALL_MS        700       // フレームがこれだけ来なければ「測距が止まった」とみなして確かめる（10Hz で7回分）
 #define TOF_RECOVER_RETRY_MS 1000     // 確かめ・やり直しの最短の間隔
-// 表の向き：区画の番号 0 がどこに来るかは、取り付けの向きで変わる（実物で確かめる。未確認）
+// 生の表の行・列の入れ替え（既定は 0＝そのまま。向きの結論は NovaViewZone の上のコメント）
 #define TOF_FLIP_ROWS       0         // 1 にすると行の順を逆にする
 #define TOF_FLIP_COLS       0         // 1 にすると列の順を逆にする
 
@@ -700,25 +701,52 @@ static void TofRecover(uint32_t nowMs) {
   }
 }
 
-static bool printTableNext = false;
+// ---- 表の向き（2026-10-25 に実物で確かめた。measurements.md「ToF の表の向き」）----
+// 生の表（行 r・列 c、区画の番号 z = r*n + c）では、列が上下（c0＝上、c7＝下）、行が左右（r0＝右、r7＝左）。
+// センサーは 90° 回って付いている（裏返しではない）。
+// Nova の向き（Nova の後ろから前を見た見た目。y＝上から、x＝左から）：見た目[y][x] = 生の表[行 n-1-x][列 y]（生の表を時計回りに 90° 回したもの）
+// 3.6-3 で本体に移すときは、この関数だけを持っていけばよい。n は 8（8×8）か 4（4×4）
+static inline int NovaViewZone(int n, int y, int x) {
+  return (n - 1 - x) * n + y;
+}
 
-static void PrintTable(void) {
+// 0＝出さない、1＝生の表（キー g）、2＝Nova の向き（キー G）
+static uint8_t printTableNext = 0;
+
+static int TableCell(char *buf, size_t size, int z) {
+  return snprintf(buf, size, " %4d:%-3u", (int)results.distance_mm[z * VL53L8CX_NB_TARGET_PER_ZONE],   // VL53L8CX_NB_TARGET_PER_ZONE は 1
+                  (unsigned)results.target_status[z * VL53L8CX_NB_TARGET_PER_ZONE]);
+}
+
+static void PrintTable(bool novaView) {
   int n = (resolution == VL53L8CX_RESOLUTION_8X8) ? 8 : 4;
-  Serial.printf("[tof] table %dx%d 距離mm:状態（5・9＝有効、255＝なし）flip行=%d 列=%d\n", n, n, TOF_FLIP_ROWS, TOF_FLIP_COLS);
+  if (novaView) {
+    Serial.printf("[tof] table %dx%d Nova の向き（後ろから前を見た見た目。上が上、左が左）距離mm:状態（5・9＝有効、255＝なし）\n", n, n);
+    for (int y = 0; y < n; y++) {
+      char line[128];
+      int len = 0;
+      for (int x = 0; x < n; x++) {
+        len += TableCell(line + len, sizeof(line) - len, NovaViewZone(n, y, x));
+      }
+      Serial.printf("[tof] %s%s\n", y == 0 ? "上" : (y == n - 1 ? "下" : "  "), line);
+    }
+    Serial.printf("[tof]  %s左%*s右\n", "", n * 9 - 2, "");
+    return;
+  }
+  Serial.printf("[tof] table %dx%d 生の表（列＝上下 c0 上・c%d 下、行＝左右 r0 右・r%d 左）距離mm:状態（5・9＝有効、255＝なし）flip行=%d 列=%d\n",
+                n, n, n - 1, n - 1, TOF_FLIP_ROWS, TOF_FLIP_COLS);
   for (int r = 0; r < n; r++) {
     int row = TOF_FLIP_ROWS ? (n - 1 - r) : r;
     char line[128];
     int len = 0;
     for (int c = 0; c < n; c++) {
       int col = TOF_FLIP_COLS ? (n - 1 - c) : c;
-      int z = row * n + col;   // 区画の番号（VL53L8CX_NB_TARGET_PER_ZONE は 1）
-      len += snprintf(line + len, sizeof(line) - len, " %4d:%-3u",
-                      (int)results.distance_mm[z * VL53L8CX_NB_TARGET_PER_ZONE],
-                      (unsigned)results.target_status[z * VL53L8CX_NB_TARGET_PER_ZONE]);
+      len += TableCell(line + len, sizeof(line) - len, row * n + col);
     }
     Serial.printf("[tof] r%d%s\n", r, line);
   }
 }
+
 
 static void TofUpdate(uint32_t nowMs) {
   if (!tofStarted) {
@@ -757,9 +785,10 @@ static void TofUpdate(uint32_t nowMs) {
   st.sumUs += us;
   if (us < st.minUs) st.minUs = us;
   if (us > st.maxUs) st.maxUs = us;
-  if (printTableNext) {
-    printTableNext = false;
-    PrintTable();
+  if (printTableNext != 0) {
+    bool nova = (printTableNext == 2);
+    printTableNext = 0;
+    PrintTable(nova);
   }
 }
 
@@ -937,8 +966,9 @@ static void FinishPending(void) {
 static void HandleKey(char k) {
   switch (k) {
     case 'g':
+    case 'G':
       if (tofOk) {
-        printTableNext = true;
+        printTableNext = (k == 'G') ? 2 : 1;
       } else {
         Serial.println("[tof] 測距していない");
       }
@@ -1035,7 +1065,7 @@ void setup() {
   while (millis() - t0 < 500) {
     // シリアルモニタがつながるのを少し待つ
   }
-  Serial.println("[tof] l8cx_ranging 開始（キー g r s n a v h c x b）");
+  Serial.println("[tof] l8cx_ranging 開始（キー g G r s n a v h c x b）");
   BatterySetup();
   PrintBattery("boot");
   PcaSetup();
