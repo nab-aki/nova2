@@ -4,7 +4,7 @@
 // 起動時：is_alive → init → 測距の頻度を設定 → 解像度 8×8 → start_ranging。どれかが失敗したら、その旨を出して測距しない
 // 測距：check_data_ready が真のときだけ get_ranging_data を呼び、かかった時間（µs）と失敗を数える
 // キー（シリアルに1文字送る。a・v は数字を続けて Enter）：
-//   g … 距離（mm）と区画の状態（target_status）を1回だけ表で出す（生の表。列＝上下、行＝左右）
+//   g … 距離（mm）と区画の状態（target_status）を1回だけ表で出す（生の表。行＝上下 r0 上、列＝左右 c0 左）
 //   G … 同じ値を Nova の向き（後ろから前を見た見た目。上下・左右のラベル付き）で出す
 //   r … 4×4 と 8×8 を切り替える（stop_ranging → set_resolution → 頻度の設定 → start_ranging）
 //   s … ここまでの集計を出して、数え直す（試験中は数え直さない）
@@ -702,13 +702,13 @@ static void TofRecover(uint32_t nowMs) {
   }
 }
 
-// ---- 表の向き（2026-10-25 に実物で確かめた。measurements.md「ToF の表の向き」）----
-// 生の表（行 r・列 c、区画の番号 z = r*n + c）では、列が上下（c0＝上、c7＝下）、行が左右（r0＝右、r7＝左）。
-// センサーは 90° 回って付いている（裏返しではない）。
-// Nova の向き（Nova の後ろから前を見た見た目。y＝上から、x＝左から）：見た目[y][x] = 生の表[行 n-1-x][列 y]（生の表を時計回りに 90° 回したもの）
+// ---- 表の向き（2026-10-26 の付け直しのあとに、厚紙で確かめた。measurements.md「ToF の表の向き」）----
+// 生の表（行 r・列 c、区画の番号 z = r*n + c）では、行が上下（r0＝上、r7＝下）、列が左右（c0＝左、c7＝右。Nova の後ろから前を見て）。
+// 付け直し前（2026-10-25）は、センサーが 90° 回って付いていて、列が上下・行が左右だった。
+// Nova の向き（Nova の後ろから前を見た見た目。y＝上から、x＝左から）：見た目[y][x] = 生の表[行 y][列 x]（そのまま）
 // 3.6-3 で本体に移すときは、この関数だけを持っていけばよい。n は 8（8×8）か 4（4×4）
 static inline int NovaViewZone(int n, int y, int x) {
-  return (n - 1 - x) * n + y;
+  return y * n + x;
 }
 
 // 0＝出さない、1＝生の表（キー g）、2＝Nova の向き（キー G）
@@ -734,7 +734,7 @@ static void PrintTable(bool novaView) {
     Serial.printf("[tof]  %s左%*s右\n", "", n * 9 - 2, "");
     return;
   }
-  Serial.printf("[tof] table %dx%d 生の表（列＝上下 c0 上・c%d 下、行＝左右 r0 右・r%d 左）距離mm:状態（5・9＝有効、255＝なし）flip行=%d 列=%d\n",
+  Serial.printf("[tof] table %dx%d 生の表（行＝上下 r0 上・r%d 下、列＝左右 c0 左・c%d 右）距離mm:状態（5・9＝有効、255＝なし）flip行=%d 列=%d\n",
                 n, n, n - 1, n - 1, TOF_FLIP_ROWS, TOF_FLIP_COLS);
   for (int r = 0; r < n; r++) {
     int row = TOF_FLIP_ROWS ? (n - 1 - r) : r;
