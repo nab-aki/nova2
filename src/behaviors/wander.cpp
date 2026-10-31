@@ -17,6 +17,9 @@ const char *WanderBehavior::StateName(State state) {
     case STATE_SCAN_FRONT:    return "正面を測る";
     case STATE_SCAN_LEFT:     return "左を測る";
     case STATE_SCAN_RIGHT:    return "右を測る";
+    case STATE_LOOK:          return "前を見る";
+    case STATE_BLIND_TURN:    return "見えないので回る";
+    case STATE_GIVEN_UP:      return "回るのをやめた";
     case STATE_FACE_FRONT:    return "正面へ戻す";
     case STATE_AVOID:         return "向き変え（その場回転）";
     case STATE_RECOVER_BACK:  return "後退";
@@ -54,13 +57,25 @@ int WanderBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
 void WanderBehavior::Restart(unsigned long nowMs) {
   pendingAvoidTurn_ = false;
   pendingRecover_ = false;
+  pendingBlindTurn_ = false;
   StuckWatch_Reset(true);   // 詰まりの数えもやり直す（持ち上げのあと・交代から戻ったとき）
   Motion_Stop(nowMs);
   ChangeState(STATE_SETTLE, nowMs);
 }
 
 void WanderBehavior::onStart(unsigned long nowMs) {
+  // 一時停止から再開したときは、見えていないの数えもやり直す
+  if (givenUp_) {
+    givenUp_ = false;
+    blindTurns_ = 0;
+  }
   Restart(nowMs);
+}
+
+bool WanderBehavior::takePauseRequest() {
+  bool request = pauseRequest_;
+  pauseRequest_ = false;
+  return request;
 }
 
 void WanderBehavior::onStop(unsigned long nowMs) {
@@ -124,6 +139,65 @@ void WanderBehavior::Decide(unsigned long nowMs) {
   }
 }
 
+// 前の3枚の結果から、歩くか向きを変えるかを決める（ToF）
+void WanderBehavior::DecideLook(unsigned long nowMs) {
+  (void)nowMs;
+  const TofViewResult &view = look_.result();
+  pendingAvoidTurn_ = false;
+  pendingRecover_ = false;
+  pendingBlindTurn_ = false;
+
+  if (view.state == TOF_VIEW_BLIND) {
+    TestStats_RecordBlindNoWalk();
+    if (blindTurns_ == 0) {
+      blindTurnKind_ = random(2) == 0 ? TURN_ROTATE_LEFT : TURN_ROTATE_RIGHT;
+    }
+    blindTurns_++;
+    if (blindTurns_ >= WANDER_BLIND_GIVEUP_TURNS) {
+      Log_Printf("うろうろ", "見えていない向きが %d回続きました。回るのをやめて一時停止します", blindTurns_);
+      TestStats_RecordBlindGiveup();
+      givenUp_ = true;
+      pauseRequest_ = true;
+      return;
+    }
+    pendingBlindTurn_ = true;
+    Log_Printf("うろうろ", "正面が見えていません（%d回目）。歩かずに %s へ %d° 回って見直します",
+               blindTurns_, Motion_TurnName(blindTurnKind_), WANDER_BLIND_TURN_DEG);
+    return;
+  }
+  blindTurns_ = 0;
+
+  float leftCm = look_.columnsCm(WANDER_SIDE_LEFT_COL_FIRST, WANDER_SIDE_LEFT_COL_LAST);
+  float rightCm = look_.columnsCm(WANDER_SIDE_RIGHT_COL_FIRST, WANDER_SIDE_RIGHT_COL_LAST);
+  Log_Printf("うろうろ", "前：%s %.1fcm（有効%d）／左 %.1fcm／右 %.1fcm（負＝測れず）",
+             TofLook_StateName(view.state), view.cm, view.valid, leftCm, rightCm);
+
+  if (view.state != TOF_VIEW_NEAR) {
+    if (view.state == TOF_VIEW_FAR_CLEAR) {
+      TestStats_RecordFarClear();
+    }
+    return;   // 歩く
+  }
+  // 片側だけ測れたら測れた側へ回る（測れない側を「遠い」とみなさない）
+  bool goLeft;
+  if (leftCm >= 0.0f && rightCm >= 0.0f) {
+    goLeft = leftCm > rightCm;
+  } else if (leftCm >= 0.0f || rightCm >= 0.0f) {
+    goLeft = leftCm >= 0.0f;
+  } else {
+    goLeft = random(2) == 0;
+  }
+  if (view.cm < WANDER_SIDE_VERY_NEAR_CM) {
+    pendingRecover_ = true;
+    recoverKind_ = goLeft ? TURN_ROTATE_LEFT : TURN_ROTATE_RIGHT;
+    Log_Printf("うろうろ", "前がとても近い（%.1fcm）ので、後退してから%sへその場回転", view.cm, goLeft ? "左" : "右");
+    return;
+  }
+  pendingAvoidTurn_ = true;
+  avoidTurnKind_ = goLeft ? TURN_ROTATE_LEFT : TURN_ROTATE_RIGHT;
+  Log_Printf("うろうろ", "前が近い（%.1fcm）ので%sへその場回転 %d°", view.cm, goLeft ? "左" : "右", WANDER_AVOID_TURN_DEG);
+}
+
 void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
   // 持ち上げられている間は状態を進めない。床に戻ったら「ため」からやり直す
   if (Safety_IsLifted()) {
@@ -144,9 +218,38 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (nowMs - stateStartMs_ < WANDER_REST_MS) {
         return;
       }
+#if TOF_ENABLE
+      look_.begin(SERVO1_DRIVE_DEG, 0.0f, WANDER_WALK_MIN_MM);
+      ChangeState(STATE_LOOK, nowMs);
+#else
       scan_.begin(SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_FRONT, nowMs);
+#endif
       return;
+
+    case STATE_LOOK:
+      if (!look_.update(nowMs)) {
+        return;
+      }
+      DecideLook(nowMs);
+      if (givenUp_) {
+        Neck_Release(NECK_OWNER_RANGE);
+        ChangeState(STATE_GIVEN_UP, nowMs);
+        return;
+      }
+      ChangeState(STATE_FACE_FRONT, nowMs);
+      return;
+
+    case STATE_BLIND_TURN:
+      if (Motion_IsTurning()) {
+        return;   // motion が止めるのを待つ
+      }
+      look_.begin(SERVO1_DRIVE_DEG, 0.0f, WANDER_WALK_MIN_MM);
+      ChangeState(STATE_LOOK, nowMs);
+      return;
+
+    case STATE_GIVEN_UP:
+      return;   // main.cpp が一時停止にするのを待つ
 
     case STATE_SCAN_FRONT:
       if (!scan_.update(sensors, nowMs)) {
@@ -206,7 +309,12 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         return;
       }
       Neck_Release(NECK_OWNER_RANGE);
-      if (pendingRecover_) {
+      if (pendingBlindTurn_) {
+        pendingBlindTurn_ = false;
+        Motion_StartTurnDeg(blindTurnKind_, WANDER_BLIND_TURN_DEG,
+                            (unsigned long)TurnTuning_StepMs(blindTurnKind_), nowMs);
+        ChangeState(STATE_BLIND_TURN, nowMs);
+      } else if (pendingRecover_) {
         recoverBackStopping_ = false;
         TestStats_RecordRecoverPerformed();
         Motion_SetSpeed(TROUBLE_BACK_SPEED, TROUBLE_BACK_RAMP_MS, nowMs);

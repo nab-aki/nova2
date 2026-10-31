@@ -283,6 +283,7 @@
 #define DEBUG_TUNE_PWM_STEP         50
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
+#define PRIORITY_PUZZLED_EYES       36      // 目：ID25 が回るのをやめて一時停止している間の「？」
 #define PRIORITY_STUCK_EYES         35      // 目：ID26 の「？」（気づいてから後退を始めるまで）
 #define PRIORITY_PAUSE_CUE          40      // 目：一時停止・再開の合図（リモコンの ▶ や p キー）
 
@@ -315,6 +316,13 @@
 // 正面の停止閾値 OBSTACLE_STOP_CM（36cm）より内側の 25cm を「とても近い」とし、
 // このときは片側旋回ではなく、後退してその場回転（安全層に止められない）で避ける。
 // WANDER_SIDE_NEAR_CM（40cm）との間に余裕を持たせてある。実機で見回しのログ（横の距離）を見ながら詰める。
+#define WANDER_WALK_MIN_MM          550     // 【仮】ToF：通路がこれだけ空いていれば歩く（common_tof_scan.md 4章）
+#define WANDER_BLIND_TURN_DEG       30      // ToF：正面が見えていないとき、歩かずに回って見直す角度
+#define WANDER_BLIND_GIVEUP_TURNS   12      // ToF：見えていないが続けてこの回数（1周）続いたら、回るのをやめて一時停止する
+#define WANDER_SIDE_LEFT_COL_FIRST  0       // ToF：向き変えで比べる列。走行姿勢で車体の正面からほぼ同じ角度になる左 c0〜c1 と右 c3〜c4
+#define WANDER_SIDE_LEFT_COL_LAST   1
+#define WANDER_SIDE_RIGHT_COL_FIRST 3
+#define WANDER_SIDE_RIGHT_COL_LAST  4
 #define WANDER_SIDE_VERY_NEAR_CM    25.0f   // 横がこれより近ければ、片側旋回でなく後退+その場回転で避ける（確定 2026-10-05）
 // 【2026-09-22 に仮置き、2026-10-05 に確定】満充電でも、後退の直後にその場回転を始めるとブラウンアウトが起きた
 // （その場回転のキックを1000→300msにしても再発。decisions.md）。なめらか加減速の出力が0になっても

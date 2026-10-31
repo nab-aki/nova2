@@ -22,6 +22,7 @@
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
 #include "behaviors/pause_cue.h"
+#include "behaviors/puzzled_eyes.h"
 #include "behaviors/stuck.h"
 #include "behaviors/stuck_eyes.h"
 #include "behaviors/trouble.h"
@@ -56,6 +57,7 @@ static DebugScanBehavior debugScanBehavior;
 static PauseCueBehavior pauseCueBehavior;
 static StuckBehavior stuckBehavior;
 static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
+static PuzzledEyesBehavior puzzledEyesBehavior(&wanderBehavior);
 
 static unsigned long lastStatusMs = 0;
 
@@ -482,6 +484,7 @@ void setup() {
   Arbiter_Register(&pauseCueBehavior);
   Arbiter_Register(&stuckEyesBehavior);
   Arbiter_Register(&noticeEyesBehavior);
+  Arbiter_Register(&puzzledEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 
   Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、%s",
@@ -514,6 +517,9 @@ void loop() {
   TofView_Update(now);       // 段0：ToF の判定を記録するだけ（動きには使わない）
 
   Arbiter_Update(Sensors_Get(), now);   // 振る舞いが車体・目・首を動かす
+  if (wanderBehavior.takePauseRequest() && !Pause_IsPaused()) {
+    TogglePause("見えていない向きが1周続いた", now);
+  }
   Safety_Update(Sensors_Get(), now);    // 安全層が最後に上書きする
 
   Eyes_Update(now);
