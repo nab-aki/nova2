@@ -17,6 +17,7 @@
 //   p … 首の上下だけを水平からの角度に動かして止めたままにする。例 p20（水平に戻すのは p か p0）。左右は正面。範囲外（-8〜+42°）なら実行しない。そのあと G で表を見る
 //   x … 首の試験を中断して集計を出す
 //   b … 電池の電圧だけを出す（起動時・キー s・首の試験の開始時にも出す）
+//   w … モニタリングの状態（IP・省電力・接続の数など）を出す（monitor.cpp。スプリント3.6-2）
 //   n・a・v は電池が 6.0V 未満なら受け付けない（サーボの電源は電池から。本体の hal_battery と同じ読み方）
 // Wire のエラーの行（[E][Wire.cpp:...] ...）は画面に出さず、種類ごとに数えて集計に出す（ets_printf の出口を横取りする）
 // 失敗したら、そのときの首の状態（推定の角度・段階・時刻）を記録する
@@ -33,6 +34,8 @@
 #include "esp_adc_cal.h"
 #include "esp_log.h"
 #include "esp32/rom/ets_sys.h"
+#include "esp_system.h"
+#include "monitor.h"
 
 // ---- ToF（第2バス）----
 #define PIN_TOF_SDA         26        // ESP32 基板のヘッダー P3-10
@@ -81,6 +84,7 @@
 #define BATTERY_DIVIDER_RATIO  4.0f   // 分圧比（公式サンプルの batteryCoefficient）
 #define BATTERY_SAMPLE_COUNT   5
 #define BATTERY_SERVO_MIN_V    6.0f   // これ未満なら、サーボに電池の電源が来ていない（または低い）とみなす（試験用）
+#define MONITOR_STATUS_MS      1000   // 電池と測距の状態をモニタリングへ渡す間隔
 
 // 時刻の差。基準がいまより新しいとき（loop の先頭で取った now のあとに、キー処理が基準を millis() で更新した場合）は 0 にする
 // （符号なしの引き算が桁あふれして 4294967 秒などが出るのを防ぐ）
@@ -114,6 +118,7 @@ static volatile uint32_t logLines = 0; // 横取りした行の累計（呼ぶ�
 static volatile uint8_t curBus = 0;    // いま通信しているバス（0＝Wire・首、1＝Wire1・ToF）。種類の頭に付ける
 static char logBuf[128];
 static uint16_t logLen = 0;
+static TaskHandle_t logTask = nullptr; // ログを行にためるのはこのタスク（loop）だけ。Wi-Fi などコア0のタスクのログは行を数えるだけにする
 
 // ---- 最初の失敗の記録 ----
 // 測距が順調な状態（開始直後・やり直しが成功した直後）から、最初にエラーが出た瞬間を残す。
@@ -146,6 +151,9 @@ struct BusScope {
 };
 
 static void LogClassify(const char *line) {
+  if (curBus == 1) {
+    MonitorCountBusError();
+  }
   if (curBus == 1 && ffPending) {
     CaptureFirstFail(millis(), FF_BUS, 0);   // 行が出た瞬間（通信の途中）が最初の失敗
   }
@@ -177,6 +185,13 @@ static void LogClassify(const char *line) {
 }
 
 static void LogPutc(char c) {
+  // ほかのタスクの行を混ぜると、logBuf を同時に書き、Wire1 のエラーとして数えてしまう
+  if (logTask != nullptr && xTaskGetCurrentTaskHandle() != logTask) {
+    if (c == '\n') {
+      MonitorCountOtherLog();
+    }
+    return;
+  }
   if (c == '\r') {
     return;
   }
@@ -520,8 +535,10 @@ static void RecordFail(uint32_t nowMs, FailKind kind, uint8_t status, uint32_t b
   CaptureFirstFail(nowMs, kind == FK_READY ? FF_READY : FF_DATA, status);   // Wire1 のエラーの行が先に出ていれば、そちらが記録済み
   if (kind == FK_READY) {
     st.readyFail++;
+    MonitorCountReadyFail();
   } else {
     st.dataFail++;
+    MonitorCountDataFail();
   }
   if (busLines == 0) {
     st.noBusFail++;
@@ -622,6 +639,7 @@ static void TofRecover(uint32_t nowMs) {
   BusScope bus(1);
   lastRecoverMs = nowMs;
   st.recStall++;
+  MonitorCountStall();
   CaptureFirstFail(nowMs, FF_STALL, 0);   // エラーが出ないまま止まった場合（エラーがあれば、すでに記録済みで何もしない）
   bool print = st.recPrinted < REC_PRINT_MAX;
   if (print) {
@@ -749,6 +767,21 @@ static void PrintTable(bool novaView) {
 }
 
 
+// フレームを Nova の向きに並べて、モニタリングへ置く
+static void PublishFrame(uint32_t dataUs) {
+  static int16_t dist[64];
+  static uint8_t status[64];
+  const int n = (resolution == VL53L8CX_RESOLUTION_8X8) ? 8 : 4;
+  for (int y = 0; y < n; y++) {
+    for (int x = 0; x < n; x++) {
+      const int z = NovaViewZone(n, y, x) * VL53L8CX_NB_TARGET_PER_ZONE;
+      dist[y * n + x] = results.distance_mm[z];
+      status[y * n + x] = results.target_status[z];
+    }
+  }
+  MonitorOnFrame(dist, status, (uint8_t)n, dataUs);
+}
+
 static void TofUpdate(uint32_t nowMs) {
   if (!tofStarted) {
     return;
@@ -786,6 +819,7 @@ static void TofUpdate(uint32_t nowMs) {
   st.sumUs += us;
   if (us < st.minUs) st.minUs = us;
   if (us > st.maxUs) st.maxUs = us;
+  PublishFrame(us);
   if (printTableNext != 0) {
     bool nova = (printTableNext == 2);
     printTableNext = 0;
@@ -1036,6 +1070,9 @@ static void HandleKey(char k) {
     case 'b':
       PrintBattery("now");
       break;
+    case 'w':
+      MonitorPrintStatus();
+      break;
     default:
       break;
   }
@@ -1067,19 +1104,22 @@ static void HandleChar(char c, uint32_t nowMs) {
 
 void setup() {
   Serial.begin(115200);
+  logTask = xTaskGetCurrentTaskHandle();   // setup と loop は同じタスク
   ets_install_putc1(LogPutc);   // Serial.begin のあとで（begin が出口を入れ直すため）
   esp_log_set_vprintf(LogVprintf);
   uint32_t t0 = millis();
   while (millis() - t0 < 500) {
     // シリアルモニタがつながるのを少し待つ
   }
-  Serial.println("[tof] l8cx_ranging 開始（キー g G r s n a v p h c x b）");
+  Serial.printf("[tof] l8cx_ranging 開始（キー g G r s n a v p h c x b w）リセット理由=%d\n", (int)esp_reset_reason());
   BatterySetup();
   PrintBattery("boot");
   PcaSetup();
   TofSetup();
   Serial.printf("[tof] Wire1 %lukHz\n", (unsigned long)(tofHz / 1000));
   ResetStats();
+  MonitorSetStatus((uint16_t)(BatteryReadVoltage() * 1000.0f), tofOk);
+  MonitorSetup();   // ToF の起動が済んでから（Wi-Fi はさらに MONITOR_BASELINE_MS のあと）
 }
 
 void loop() {
@@ -1093,4 +1133,9 @@ void loop() {
   NeckUpdate(now);
   HandUpdate(now);
   TofUpdate(now);
+  static uint32_t lastStatusMs = 0;
+  if (Since(now, lastStatusMs) >= MONITOR_STATUS_MS) {
+    lastStatusMs = now;
+    MonitorSetStatus((uint16_t)(BatteryReadVoltage() * 1000.0f), tofOk);
+  }
 }

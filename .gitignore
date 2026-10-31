@@ -18,3 +18,6 @@ Thumbs.db
 
 # 個人の環境の設定
 docs/nova2.code-workspace
+
+# Wi-Fi の SSID・パスワード（見本は wifi_secrets.example.h）
+wifi_secrets.h
