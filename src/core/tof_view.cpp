@@ -63,6 +63,7 @@ static bool holding = false;
 static int nearRun = 0;                // 通路の中の障害物が続いた枚数
 static int nearRunColumn = NO_COLUMN;  // 前の枚で最も近かったマスの列
 static int clearRun = 0;               // 通路が「なし」の距離まで空いている枚が続いた数
+static int blindRun = 0;               // 前進中に見えていない枚が続いた数
 
 // 比較の記録（起動からの累計）
 static uint32_t framesJudged = 0;      // 判定に使った枚数
@@ -177,21 +178,6 @@ bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out) {
   return true;
 }
 
-// 首を実際に向けている角度から、右へのずらし α を求める（段0 は 0°、段1 から走行姿勢で 8°）
-static float PanTrimRightDeg(void) {
-  return (float)((SERVO1_FRONT_DEG - Servo_GetAngle(SERVO_PAN)) * SERVO1_LEFT_SIGN);
-}
-
-// マスの点をセンサーからの前後 x・中心線からの左右 y（左が正）・床からの高さ z に直す（common_tof_scan.md 3.1）
-static void ZonePoint(int row, int col, int distanceMm, float trimRightDeg, float *x, float *y, float *z) {
-  float az = ((3.5f - col) * TOF_ZONE_DEG - trimRightDeg) * DEG_TO_RAD;
-  float el = (3.5f - row) * TOF_ZONE_DEG * DEG_TO_RAD;
-  float flat = distanceMm * cosf(el);
-  *x = flat * cosf(az);
-  *y = flat * sinf(az) + TOF_SENSOR_Y_MM;
-  *z = TOF_SENSOR_HEIGHT_MM + distanceMm * sinf(el);
-}
-
 // 通路の中にあるか。上の段（r0〜r4）だけを見る（床のマスは段2 まで止める判断に使わない。3.4）
 static bool InCorridor(float y, float z) {
   return fabsf(y) < (TOF_BODY_HALF_WIDTH_MM + TOF_CORRIDOR_MARGIN_MM) && z < TOF_HEAD_CLEAR_MM;
@@ -230,7 +216,7 @@ struct CorridorScan {
 };
 
 static void ScanCorridor(CorridorScan *out) {
-  float trim = PanTrimRightDeg();
+  int pan = Servo_GetAngle(SERVO_PAN);
   out->bestX = 1e9f;
   out->bestRow = NO_COLUMN;
   out->bestCol = NO_COLUMN;
@@ -251,7 +237,7 @@ static void ScanCorridor(CorridorScan *out) {
         continue;   // 測れず：空きにも近いにも数えない
       }
       float x, y, h;
-      ZonePoint(row, col, d, trim, &x, &y, &h);
+      TofView_PointForPan(row, col, d, pan, &x, &y, &h);
       if (!InCorridor(y, h)) {
         continue;
       }
@@ -316,7 +302,8 @@ static void MismatchAddFollow(Mismatch *m, const CorridorScan &scan, unsigned lo
 }
 
 // この1枚の前端の隙間と横の余裕を、直近3枚の記録へ足す
-static void RecordGap(float trim) {
+static void RecordGap(void) {
+  int pan = Servo_GetAngle(SERVO_PAN);
   GapCell best;
   best.gapMm = NO_GAP;
   int side = NO_GAP;
@@ -328,7 +315,7 @@ static void RecordGap(float trim) {
         continue;
       }
       float x, y, h;
-      ZonePoint(row, col, d, trim, &x, &y, &h);
+      TofView_PointForPan(row, col, d, pan, &x, &y, &h);
       if (h >= TOF_HEAD_CLEAR_MM || fabsf(y) >= TOF_BODY_HALF_WIDTH_MM + TOF_CORRIDOR_MARGIN_MM) {
         continue;
       }
@@ -435,7 +422,7 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
     RecordFloor(movingForward);
   }
 
-  RecordGap(PanTrimRightDeg());
+  RecordGap();
 
   CorridorScan scan;
   ScanCorridor(&scan);
@@ -470,6 +457,11 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   }
   nearRunColumn = near ? bestCol : NO_COLUMN;
 
+  // 前進中に、上の段が測れず床も写らない枚が続いたら止まる（止まっているときの扱いは ID25・ID15 が決める）
+  TofViewResult view;
+  TofLook_Evaluate(frame, Servo_GetAngle(SERVO_PAN), 0.0f, TOF_STOP_MM, &view);
+  blindRun = (movingForward && view.state == TOF_VIEW_BLIND) ? blindRun + 1 : 0;
+
   // 「なし」：通路に「停止距離＋余裕」より近いものがない枚が続く
   bool clear = bestCol == NO_COLUMN || bestX >= TOF_STOP_MM + TOF_CLEAR_MARGIN_MM;
   clearRun = clear ? clearRun + 1 : 0;
@@ -482,8 +474,12 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
     // 不明から決めるときは、「なし」と言い切れなければ「あり」にする（38〜48cm の間で歩き出して、すぐ止まるのを防ぐ）
     judgeKnown = true;
     judgedBlocked = clearRun < TOF_NEAR_FRAMES;
-  } else if (!judgedBlocked && nearRun >= TOF_NEAR_FRAMES) {
+  } else if (!judgedBlocked && (nearRun >= TOF_NEAR_FRAMES || blindRun >= TOF_BLIND_STOP_FRAMES)) {
     judgedBlocked = true;
+    if (blindRun >= TOF_BLIND_STOP_FRAMES) {
+      TestStats_RecordBlindStop();
+      Log_Printf("ToF", "前が見えていません（上の段が測れず、床も写りません）。止まります");
+    }
   } else if (judgedBlocked && clearRun >= TOF_NEAR_FRAMES) {
     judgedBlocked = false;
   }
@@ -658,6 +654,7 @@ void TofView_Reset(void) {
   judgedBlocked = false;
   emergencyNow = false;
   unknownFrames = 0;
+  blindRun = 0;
   nearRun = 0;
   nearRunColumn = NO_COLUMN;
   clearRun = 0;
@@ -879,7 +876,7 @@ void TofView_PrintFrame(void) {
   }
   Log_Printf("ToF", "最新の1枚 #%lu（行＝上下 r0 上、列＝左右 c0 左。距離mm:状態。*＝通路の中で %dmm より近い）",
              (unsigned long)frame.seq, TOF_STOP_MM);
-  float trim = PanTrimRightDeg();
+  int pan = Servo_GetAngle(SERVO_PAN);
   for (int row = 0; row < 8; row++) {
     char line[128];
     int used = 0;
@@ -887,7 +884,7 @@ void TofView_PrintFrame(void) {
       int z = row * COLS + col;
       int d = frame.distanceMm[z];
       float x, y, h;
-      ZonePoint(row, col, d, trim, &x, &y, &h);
+      TofView_PointForPan(row, col, d, pan, &x, &y, &h);
       bool usable = d > 0 && (IsValidStatus(frame.status[z]) || IsTooNear(d));
       bool mark = row < FLOOR_ROW_FIRST && usable && InCorridor(y, h) && x < TOF_STOP_MM;
       used += snprintf(line + used, sizeof(line) - used, " %4d:%-3u%s", d, (unsigned)frame.status[z], mark ? "*" : " ");

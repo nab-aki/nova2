@@ -123,6 +123,7 @@
 #define TOF_LOOK_ONSET_DPS          2.0f    // 【仮】この時間に超えなければ「動かなかった疑い」と数える（記録だけ）
 #define TOF_SAME_PLACE_FORWARD_MS   1000    // 【仮】困るの間の前進の合計がこれ未満なら「同じ場所」とみなす
 #define TOF_SAME_PLACE_COUNT        3       // 「同じ場所」で困るがこの回数続いたら数える
+#define TOF_BLIND_STOP_FRAMES       2       // 【仮】前進中、通路の上の段が測れず床も写らない枚がこれだけ続いたら止まる（黒い物の疑い）
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
