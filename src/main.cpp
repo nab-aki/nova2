@@ -159,6 +159,7 @@ static void PrintKeyHelp(void) {
   Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
   Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
+  Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -411,6 +412,7 @@ static void HandleSerialKeys(void) {
         TofView_Print();
         break;
       case 'y': TofView_PrintFrame(); break;
+      case 'c': TofView_PrintMismatchFrames(); break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;

@@ -65,6 +65,7 @@ static unsigned long testStartMs = 0;
 static unsigned long lastSaveMs = 0;
 static bool recording = false;        // 再開してから一時停止するまでの間か
 static bool pendingSave = false;      // 一時停止したが、まだ止まりきっていないため保存を待っている
+static bool flashWaiting = false;     // リングには写したが、フラッシュにまだ書いていない（次に止まったときに書く）
 static uint8_t bootResetCode = 0;     // このブートのリセット理由（新しい試験を始めるたびに記録に刻む）
 static TofCounts tofBase;             // 試験を始めたときの ToF の数（差をこの試験の分として残す）
 
@@ -103,11 +104,21 @@ static void BeginNewTest(unsigned long nowMs) {
              storage.headIndex + 1, Reset_ReasonName(bootResetCode));
 }
 
-// 現在の値をリングに書き込み、NVSへ保存する
-static void SaveCurrent(unsigned long nowMs, const char *reason) {
+// 現在の値をリングに写す（フラッシュには書かない）
+static void CopyToRing(unsigned long nowMs) {
   current.elapsedMs = nowMs - testStartMs;
   RefreshTofCounts();
   storage.ring[storage.headIndex] = current;
+}
+
+// 現在の値をリングに書き込み、NVSへ保存する。動いている間は書かず、次に止まったときに回す
+static void SaveCurrent(unsigned long nowMs, const char *reason) {
+  CopyToRing(nowMs);
+  if (!Motion_IsStill()) {
+    flashWaiting = true;
+    return;
+  }
+  flashWaiting = false;
   Storage_Save(STORAGE_KEY_TEST_STATS, &storage, sizeof(storage));
   Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回(回転中%d回) 困る開始%d/空き%d/あきらめ%d "
              "うろうろ旋回%d/中断%d 後退回転%d/中断%d 持ち上げ%d 詰まり検知A%d/B%d 脱出A%d/B%d）",
@@ -152,11 +163,16 @@ void TestStats_Update(unsigned long nowMs) {
   }
   lastUpdateMs = nowMs;
 
-  if (!recording && !pendingSave) {
+  if (!recording && !pendingSave && !flashWaiting) {
     return;   // 試験を始めていない（一時停止のまま。まだ一度も再開していない）
   }
   if (!Motion_IsStill()) {
     return;   // 走行中はフラッシュに書かない
+  }
+  if (flashWaiting && !pendingSave) {
+    SaveCurrent(nowMs, "走行中に書かなかった分");
+    lastSaveMs = nowMs;
+    return;
   }
   if (pendingSave) {
     SaveCurrent(nowMs, "一時停止");
@@ -181,11 +197,16 @@ void TestStats_OnPauseToggle(bool paused, unsigned long nowMs) {
   }
   // 再開
   if (pendingSave) {
-    // まれに、止まりきる前に再開された場合。ベストエフォートでその場で確定・保存してから、次の試験を始める
-    SaveCurrent(nowMs, "一時停止（止まる前に再開）");
+    // まれに、止まりきる前に再開された場合。その場ではリングに写すだけにして、フラッシュには次に止まったときに書く
+    CopyToRing(nowMs);
+    flashWaiting = true;
     pendingSave = false;
   }
   BeginNewTest(nowMs);
+}
+
+bool TestStats_IsRecording(void) {
+  return recording;
 }
 
 void TestStats_RecordNoticeStop(float restCm, bool whileTurning) {
@@ -404,6 +425,7 @@ static void ClearAll(unsigned long nowMs) {
   }
   ResetRecord(&current);
   pendingSave = false;
+  flashWaiting = false;
   if (recording) {
     current.startResetCode = bootResetCode;
     TofView_GetCounts(&tofBase);
@@ -418,6 +440,11 @@ void TestStats_HandleClearKey(unsigned long nowMs) {
   static bool armed = false;
   static unsigned long armedAtMs = 0;
 
+  if (!Motion_IsStill()) {
+    armed = false;
+    Log_Printf("試験", "走行中は消去しません。止まってから押してください");   // 消去もフラッシュに書く
+    return;
+  }
   if (armed && nowMs - armedAtMs < TEST_STATS_CLEAR_CONFIRM_MS) {
     ClearAll(nowMs);
     armed = false;

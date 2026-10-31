@@ -41,4 +41,7 @@ void TofView_Print(void);
 // y：最新の1枚を表で出す（距離mm:状態。* は通路の中で止まる距離より近いマス）
 void TofView_PrintFrame(void);
 
+// c：食い違った回の 8×8 の表を出す
+void TofView_PrintMismatchFrames(void);
+
 #endif // NOVA_CORE_TOF_VIEW_H

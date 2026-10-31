@@ -86,7 +86,7 @@
 #define TOF_ALIVE_RETRY_MS          1000    // 試す間隔
 #define TOF_TASK_CORE               1       // コア0 は Wi-Fi が使う
 #define TOF_TASK_PRIORITY           2       // loop（1）より上。同じだと I2C の待ちのあと 1 tick 待たされる
-#define TOF_TASK_STACK              6144    // t で残りを見る
+#define TOF_TASK_STACK              8192    // バイト。6144 では残り 332 だった（2026-10-31）。t で残りを見る
 #define TOF_STALE_MS                250     // 【仮】最新の1枚がこれより古ければ「途切れ」（周期の実測最大 103ms の約2.5倍）。段0 は数えるだけ
 
 // 取り付け・車体の寸法（実測。measurements.md「車体の寸法」「ToF の配線」）
@@ -107,6 +107,8 @@
 #define TOF_STATUS_VALID_A          5       // 【仮】有効とみなす状態（番号の意味は ST の資料で未確認）
 #define TOF_STATUS_VALID_B          9
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
+#define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
+#define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
 
 // 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
 #define TOF_FLOOR_RATIO_MIN         0.50f   // 分布の下の端
