@@ -61,6 +61,9 @@ void TestStats_RecordRecoverInterrupted(void);
 // ID25：歩き出した（加速を始めた。途中で止められた回も1回）
 void TestStats_RecordWalk(void);
 
+// loop の周期（µs）。毎 loop 呼ぶ（スプリント3.6-3 段0。ToF のタスクの影響を見る）
+void TestStats_RecordLoopUs(uint32_t us);
+
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);
 

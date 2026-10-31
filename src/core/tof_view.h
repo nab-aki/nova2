@@ -6,7 +6,22 @@
 
 #include <Arduino.h>
 
+#include "../hal/hal_tof.h"
+
+// 試験の集計に残す ToF の数（起動からの累計）
+struct TofCounts {
+  TofState state;
+  uint32_t frames;
+  uint32_t readyFail;
+  uint32_t dataFail;
+  uint32_t staleEvents;
+  uint32_t staleMaxMs;
+  uint32_t periodMaxMs;
+};
+
 void TofView_Setup(void);
+
+void TofView_GetCounts(TofCounts *out);
 
 // loop() から毎回呼ぶ。Obstacle_Update のあとに呼ぶ（超音波の判定と比べるため）
 void TofView_Update(unsigned long nowMs);

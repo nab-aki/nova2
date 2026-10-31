@@ -225,6 +225,18 @@ void TofView_Setup(void) {
   Log_Printf("ToF", "段0：判定は記録するだけで、動きには使いません（超音波で走ります）");
 }
 
+void TofView_GetCounts(TofCounts *out) {
+  TofStats s;
+  Tof_GetStats(&s);
+  out->state = s.state;
+  out->frames = s.frames;
+  out->readyFail = s.readyFail;
+  out->dataFail = s.dataFail;
+  out->staleEvents = staleEvents;
+  out->staleMaxMs = staleMaxMs;
+  out->periodMaxMs = s.periodMaxMs;
+}
+
 // 起動の結果を1回だけ出す（タスクからはログを出さないので、loop で出す）
 static void ReportStart(void) {
   if (startReported) {

@@ -5,6 +5,7 @@
 #include "../hal/hal_reset.h"
 #include "../hal/hal_storage.h"
 #include "motion.h"
+#include "tof_view.h"
 #include "trace.h"
 
 // 1回の試験の集計値。NVSにもこのまま保存する（構造を変えたら古い保存値は読み捨てられる）
@@ -34,6 +35,18 @@ struct TestRecord {
   uint32_t stuckUnchangedMaxMs; // ID26：見回しが「同じ」が続いた最長の時間
   uint16_t walkCount;           // ID25：歩き出した回数（加速を始めた回数。途中で止められた回も1回）
   uint32_t forwardMs;           // 前進の速度が出ていた時間の合計
+  uint32_t loopCount;           // loop の回数（記録中）
+  uint64_t loopSumUs;           // loop の周期の合計（平均用）
+  uint32_t loopMaxUs;           // loop の周期の最大
+  uint32_t loopSlowCount;       // LOOP_SLOW_MS より長かった回数
+  uint32_t loopVerySlowCount;   // LOOP_VERY_SLOW_MS より長かった回数
+  uint8_t tofState;             // ToF の状態（TofState）
+  uint32_t tofFrames;           // この試験の間に届いた枚数
+  uint32_t tofReadyFail;        // この試験の間の check_data_ready の失敗
+  uint32_t tofDataFail;         // この試験の間の get_ranging_data の失敗
+  uint32_t tofStaleEvents;      // この試験の間のデータの途切れの回数
+  uint32_t tofStaleMaxMs;       // 最も長い途切れ（起動から）
+  uint32_t tofPeriodMaxMs;      // 周期の最大（起動から）
 };
 
 // NVSに保存する全体。直近3回分のリングバッファ
@@ -44,7 +57,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E33u  // "TSN3"（歩いた回数・前進の合計を足した）
+#define TEST_STATS_MAGIC  0x54534E34u  // "TSN4"（歩いた回数・前進の合計・loop の周期・ToF の数を足した）
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -53,6 +66,20 @@ static unsigned long lastSaveMs = 0;
 static bool recording = false;        // 再開してから一時停止するまでの間か
 static bool pendingSave = false;      // 一時停止したが、まだ止まりきっていないため保存を待っている
 static uint8_t bootResetCode = 0;     // このブートのリセット理由（新しい試験を始めるたびに記録に刻む）
+static TofCounts tofBase;             // 試験を始めたときの ToF の数（差をこの試験の分として残す）
+
+// ToF の数を、いまの値で current に写す（保存と表示の直前に呼ぶ）
+static void RefreshTofCounts(void) {
+  TofCounts c;
+  TofView_GetCounts(&c);
+  current.tofState = (uint8_t)c.state;
+  current.tofFrames = c.frames - tofBase.frames;
+  current.tofReadyFail = c.readyFail - tofBase.readyFail;
+  current.tofDataFail = c.dataFail - tofBase.dataFail;
+  current.tofStaleEvents = c.staleEvents - tofBase.staleEvents;
+  current.tofStaleMaxMs = c.staleMaxMs;
+  current.tofPeriodMaxMs = c.periodMaxMs;
+}
 
 static void ResetRecord(TestRecord *r) {
   *r = TestRecord{};
@@ -67,6 +94,7 @@ static void BeginNewTest(unsigned long nowMs) {
   }
   ResetRecord(&current);
   current.startResetCode = bootResetCode;
+  TofView_GetCounts(&tofBase);
   testStartMs = nowMs;
   lastSaveMs = nowMs;
   recording = true;
@@ -78,6 +106,7 @@ static void BeginNewTest(unsigned long nowMs) {
 // 現在の値をリングに書き込み、NVSへ保存する
 static void SaveCurrent(unsigned long nowMs, const char *reason) {
   current.elapsedMs = nowMs - testStartMs;
+  RefreshTofCounts();
   storage.ring[storage.headIndex] = current;
   Storage_Save(STORAGE_KEY_TEST_STATS, &storage, sizeof(storage));
   Log_Printf("試験", "保存しました（%s。起動:%s 経過%lums 気づく停止%d回(回転中%d回) 困る開始%d/空き%d/あきらめ%d "
@@ -233,6 +262,17 @@ void TestStats_RecordWalk(void) {
   current.walkCount++;
 }
 
+void TestStats_RecordLoopUs(uint32_t us) {
+  if (!recording) {
+    return;
+  }
+  current.loopCount++;
+  current.loopSumUs += us;
+  if (us > current.loopMaxUs) current.loopMaxUs = us;
+  if (us > LOOP_SLOW_MS * 1000UL) current.loopSlowCount++;
+  if (us > LOOP_VERY_SLOW_MS * 1000UL) current.loopVerySlowCount++;
+}
+
 void TestStats_RecordLift(void) {
   if (!recording) {
     return;
@@ -319,6 +359,18 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              r.stuckDetectFront + r.stuckDetectContact + r.stuckDetectSide,
              r.stuckDetectFront, r.stuckDetectContact, r.stuckDetectSide,
              r.stuckEscapedA, r.stuckEscapedB, r.stuckRepeat, r.stuckUnchangedMaxMs / 1000.0f);
+  Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回。%dms 超 %lu回・%dms 超 %lu回）",
+             slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
+             (unsigned long)r.loopCount, LOOP_SLOW_MS, (unsigned long)r.loopSlowCount,
+             LOOP_VERY_SLOW_MS, (unsigned long)r.loopVerySlowCount);
+  if (r.tofState == TOF_STATE_DISABLED) {
+    Log_Printf("試験", "[%d]  ToF：なし（このビルドでは使わない）", slot);
+    return;
+  }
+  Log_Printf("試験", "[%d]  ToF：%s 枚数 %lu 失敗 ready %lu／data %lu 途切れ %lu回（起動から：最長 %lums・周期の最大 %lums）",
+             slot, r.tofState == TOF_STATE_RUNNING ? "測距中" : (r.tofState == TOF_STATE_FAILED ? "起動に失敗" : "起動中"),
+             (unsigned long)r.tofFrames, (unsigned long)r.tofReadyFail, (unsigned long)r.tofDataFail,
+             (unsigned long)r.tofStaleEvents, (unsigned long)r.tofStaleMaxMs, (unsigned long)r.tofPeriodMaxMs);
 }
 
 void TestStats_Print(unsigned long nowMs) {
@@ -327,6 +379,9 @@ void TestStats_Print(unsigned long nowMs) {
   if (storage.validCount == 0) {
     Log_Printf("試験", "まだ試験を1回も始めていません（再開すると始まります）");
     return;
+  }
+  if (recording || pendingSave) {
+    RefreshTofCounts();
   }
   Log_Printf("試験", "直近%d件（新しい順）：", storage.validCount);
   for (int i = 0; i < storage.validCount; i++) {
@@ -351,6 +406,7 @@ static void ClearAll(unsigned long nowMs) {
   pendingSave = false;
   if (recording) {
     current.startResetCode = bootResetCode;
+    TofView_GetCounts(&tofBase);
     testStartMs = nowMs;
     lastSaveMs = nowMs;
     storage.headIndex = 0;

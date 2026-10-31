@@ -59,40 +59,14 @@ static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
 
 static unsigned long lastStatusMs = 0;
 
-// loop の周期の記録（スプリント3.6-3 段0。ToF のタスクの影響を見る。再開で数え直す）
-static uint32_t loopCount = 0;
-static uint64_t loopSumUs = 0;
-static uint32_t loopMaxUs = 0;
-static uint32_t loopSlowCount = 0;
-static uint32_t loopVerySlowCount = 0;
-static uint32_t loopLastUs = 0;
-
-static void ResetLoopStats(void) {
-  loopCount = 0;
-  loopSumUs = 0;
-  loopMaxUs = 0;
-  loopSlowCount = 0;
-  loopVerySlowCount = 0;
-}
-
+// loop の周期を試験の集計へ渡す（スプリント3.6-3 段0。ToF のタスクの影響を見る）
 static void RecordLoop(void) {
+  static uint32_t lastUs = 0;
   uint32_t nowUs = micros();
-  if (loopLastUs != 0) {
-    uint32_t us = nowUs - loopLastUs;
-    loopCount++;
-    loopSumUs += us;
-    if (us > loopMaxUs) loopMaxUs = us;
-    if (us > LOOP_SLOW_MS * 1000UL) loopSlowCount++;
-    if (us > LOOP_VERY_SLOW_MS * 1000UL) loopVerySlowCount++;
+  if (lastUs != 0) {
+    TestStats_RecordLoopUs(nowUs - lastUs);
   }
-  loopLastUs = nowUs;
-}
-
-static void PrintLoopStats(void) {
-  Log_Printf("loop", "周期 平均 %.2fms／最大 %.1fms（%lu回。%dms 超 %lu回・%dms 超 %lu回。再開から）",
-             loopCount > 0 ? (float)(loopSumUs / loopCount) / 1000.0f : 0.0f, loopMaxUs / 1000.0f,
-             (unsigned long)loopCount, LOOP_SLOW_MS, (unsigned long)loopSlowCount,
-             LOOP_VERY_SLOW_MS, (unsigned long)loopVerySlowCount);
+  lastUs = nowUs;
 }
 
 // センサー値と状態をまとめて1行表示する
@@ -184,7 +158,7 @@ static void PrintKeyHelp(void) {
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
-  Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布と loop の周期も出ます）");
+  Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -357,9 +331,6 @@ static void TogglePause(const char *source, unsigned long nowMs) {
   bool paused = Pause_Toggle(source);
   pauseCueBehavior.trigger(paused);
   TestStats_OnPauseToggle(paused, nowMs);
-  if (!paused) {
-    ResetLoopStats();
-  }
 }
 
 // I2C の失敗（機器ごと）と、ライントラッキングが読めずに止めた回数。起動からの累計で、保存はしない
@@ -438,7 +409,6 @@ static void HandleSerialKeys(void) {
         Motion_PrintTurnStats();
         troubleBehavior.printLog();
         TofView_Print();
-        PrintLoopStats();
         break;
       case 'y': TofView_PrintFrame(); break;
       case 'j': Gyro_PrintNow(); break;
