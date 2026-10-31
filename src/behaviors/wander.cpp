@@ -295,6 +295,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
                    runMs_, WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS);
       }
       Motion_SetSpeed(CRUISE_SPEED, MOTION_ACCEL_MS, nowMs);
+      TestStats_RecordWalk();
       ChangeState(STATE_ACCEL, nowMs);
       return;
 

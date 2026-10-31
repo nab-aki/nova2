@@ -32,6 +32,8 @@ struct TestRecord {
   uint16_t stuckEscapedB;       // ID26：信号B の回で、同上
   uint16_t stuckRepeat;         // ID26：くり返し詰まった回数
   uint32_t stuckUnchangedMaxMs; // ID26：見回しが「同じ」が続いた最長の時間
+  uint16_t walkCount;           // ID25：歩き出した回数（加速を始めた回数。途中で止められた回も1回）
+  uint32_t forwardMs;           // 前進の速度が出ていた時間の合計
 };
 
 // NVSに保存する全体。直近3回分のリングバッファ
@@ -42,7 +44,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E32u  // "TSN2"（ID26 の項目を足した）
+#define TEST_STATS_MAGIC  0x54534E33u  // "TSN3"（歩いた回数・前進の合計を足した）
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -115,6 +117,12 @@ void TestStats_Setup(bool startPaused, unsigned long nowMs) {
 }
 
 void TestStats_Update(unsigned long nowMs) {
+  static unsigned long lastUpdateMs = 0;
+  if (recording && Motion_GetSpeed() >= MOTOR_SPEED_EPSILON) {
+    current.forwardMs += nowMs - lastUpdateMs;
+  }
+  lastUpdateMs = nowMs;
+
   if (!recording && !pendingSave) {
     return;   // 試験を始めていない（一時停止のまま。まだ一度も再開していない）
   }
@@ -218,6 +226,13 @@ void TestStats_RecordRecoverInterrupted(void) {
   current.recoverInterrupted++;
 }
 
+void TestStats_RecordWalk(void) {
+  if (!recording) {
+    return;
+  }
+  current.walkCount++;
+}
+
 void TestStats_RecordLift(void) {
   if (!recording) {
     return;
@@ -290,11 +305,11 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
   } else {
     snprintf(distPart, sizeof(distPart), "-");
   }
-  Log_Printf("試験", "[%d]%s 起動:%s 経過%lums 気づく:停止%d回(うち回転中%d回)(%s) 困る:開始%d/空き%d/あきらめ%d "
+  Log_Printf("試験", "[%d]%s 起動:%s 経過%lums 歩く:%d回 前進の合計 %.1f秒 気づく:停止%d回(うち回転中%d回)(%s) 困る:開始%d/空き%d/あきらめ%d "
              "うろうろ:旋回 実施%d/中断%d 後退回転 実施%d/中断%d 持ち上げ%d回",
              slot, isRecording ? "（記録中）" : (live ? "（保存待ち）" : ""),
              Reset_ReasonName(r.startResetCode),
-             elapsedMs, r.stopCount, r.stopWhileTurning, distPart,
+             elapsedMs, r.walkCount, r.forwardMs / 1000.0f, r.stopCount, r.stopWhileTurning, distPart,
              r.troubleStarts, r.troubleCleared, r.troubleGiveups,
              r.pivotPerformed, r.pivotInterrupted,
              r.recoverPerformed, r.recoverInterrupted, r.liftCount);

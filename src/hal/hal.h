@@ -12,6 +12,7 @@
 #include "hal_reset.h"
 #include "hal_servo.h"
 #include "hal_storage.h"
+#include "hal_tof.h"
 #include "hal_track.h"
 #include "hal_ultrasonic.h"
 #include "hal_ws2812.h"

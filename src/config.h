@@ -73,6 +73,54 @@
 #define SERVO2_MIN_DEG              90      // 実測：servo2 の可動範囲（仕様上は 90〜150）
 #define SERVO2_MAX_DEG              140
 
+// ------------------------ ToF（VL53L8CX。スプリント3.6-3。docs/specs/common_tof_scan.md）------------------------ //
+// 段0：判定は記録するだけで、動きには使わない（超音波で走る）。
+#ifndef TOF_ENABLE
+#define TOF_ENABLE                  1       // 0 なら ToF のタスクを作らない（比べるための環境 fnk0053_notof）
+#endif
+#define TOF_I2C_HZ                  400000  // Wire1 の速さ（実測：線 15cm で失敗 0。measurements.md）
+#define TOF_FREQ_HZ                 10      // 測距の頻度
+#define TOF_FRAME_MS                100     // 1枚の時間（1000 ÷ TOF_FREQ_HZ）
+#define TOF_POLL_MS                 5       // check_data_ready を呼ぶ間隔
+#define TOF_ALIVE_TRIES             3       // 起動時に is_alive を試す回数（書き込み直後に応答しないことがあるため）
+#define TOF_ALIVE_RETRY_MS          1000    // 試す間隔
+#define TOF_TASK_CORE               1       // コア0 は Wi-Fi が使う
+#define TOF_TASK_PRIORITY           2       // loop（1）より上。同じだと I2C の待ちのあと 1 tick 待たされる
+#define TOF_TASK_STACK              6144    // t で残りを見る
+#define TOF_STALE_MS                250     // 【仮】最新の1枚がこれより古ければ「途切れ」（周期の実測最大 103ms の約2.5倍）。段0 は数えるだけ
+
+// 取り付け・車体の寸法（実測。measurements.md「車体の寸法」「ToF の配線」）
+#define TOF_SENSOR_HEIGHT_MM        95      // 床からセンサーまで（首が水平のとき）
+#define TOF_SENSOR_Y_MM             35      // 首の中心からセンサーまで（左へ）
+#define TOF_BODY_HALF_WIDTH_MM      75      // 車体の半分の幅（タイヤの外側どうし 150mm）
+#define TOF_FRONT_OFFSET_MM         30      // センサーの表面から車体の前端まで
+#define TOF_ZONE_DEG                5.625f  // 1マスの角度（視野 45° ÷ 8。視野はデータシートで未確認）
+
+// 通路の判定
+#define TOF_CORRIDOR_MARGIN_MM      20      // 【仮】通路の幅の余裕（片側）
+#define TOF_STOP_MM                 380     // 【仮】通路の中の停止距離（センサーから。今の超音波は 360mm）
+#define TOF_CLEAR_MARGIN_MM         100     // 「なし」に戻る余裕（超音波の OBSTACLE_CLEAR_MARGIN_CM と同じ）
+#define TOF_EMERGENCY_MM            120     // これ未満は1枚で非常停止（超音波の OBSTACLE_EMERGENCY_CM と同じ）
+#define TOF_NEAR_FRAMES             2       // 【仮】続けてこの枚数で「あり」
+#define TOF_HEAD_CLEAR_MM           160     // 【仮】これより高い物は無視（首の上端 125mm より上。テーブルの下で止まらないため）
+#define TOF_TOO_NEAR_MM             50      // 【仮】状態によらず「近すぎ」とみなす距離（状態 255 で 20〜30mm が出るため）
+#define TOF_STATUS_VALID_A          5       // 【仮】有効とみなす状態（番号の意味は ST の資料で未確認）
+#define TOF_STATUS_VALID_B          9
+#define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
+
+// 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
+#define TOF_FLOOR_RATIO_MIN         0.50f   // 分布の下の端
+#define TOF_FLOOR_RATIO_STEP        0.05f   // 分布の刻み
+#define TOF_FLOOR_RATIO_BINS        16      // 0.50〜1.30。外は端に入れる
+
+// 走行姿勢（首を右へずらして、左右の通路の縁が見え始める距離をそろえる。段1 から使う）
+#define NECK_DRIVE_TRIM_RIGHT_DEG   8       // 【仮】実測の寸法でそろう角度は 7.5°（common_tof_scan.md 3.6）
+#define SERVO1_DRIVE_DEG            (SERVO1_FRONT_DEG - SERVO1_LEFT_SIGN * NECK_DRIVE_TRIM_RIGHT_DEG)   // 76°。今はまだ使わない
+
+// loop の周期の記録（段0 で ToF のタスクの影響を見る）
+#define LOOP_SLOW_MS                20      // これより長い loop を「遅い」として数える
+#define LOOP_VERY_SLOW_MS           50      // 同じく「とても遅い」
+
 // ------------------------ 超音波 ------------------------ //
 // 測距の間隔は、実測（60ms間隔×20回で全距離・全対象とも有効20/20）に合わせて 60ms にしている。
 // 障害物の判定が「直近5回のうち3回」なので、間隔が短いほど検知が早い（100ms→300ms、60ms→180ms）。

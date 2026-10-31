@@ -58,6 +58,9 @@ void TestStats_RecordRecoverPerformed(void);
 // ID25：後退+その場回転が途中で交代された（優先度を上げてあるので、通常は一時停止のときだけ）
 void TestStats_RecordRecoverInterrupted(void);
 
+// ID25：歩き出した（加速を始めた。途中で止められた回も1回）
+void TestStats_RecordWalk(void);
+
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);
 
