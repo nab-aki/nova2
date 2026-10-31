@@ -65,7 +65,7 @@
   Wire のエラーの行は出さずに種類ごとに数え、集計に「段階・推定の角度の分布・失敗の記録（最初の20件）・やり直しの回数」が出る。
   `h` のときだけ、止まったら stop・get_resolution を飛ばしてすぐ init からやり直す（短くする）。
   [rec] の1行目に「最初の失敗」（順調な状態から最初のエラーの時刻・角度・段階）と「測れていた時間」、2行目にやり直しの内訳（各 ms・終了時刻）が出る。集計にも測れていた時間の min/avg/max。
-  **モニタリング（スプリント3.6-2）**：`src/l8cx_ranging/wifi_secrets.example.h` を `wifi_secrets.h` にコピーして値を書く（.gitignore 済み。なければ Wi-Fi なしで動く）。起動の 20 秒後（`MONITOR_BASELINE_MS`）に Wi-Fi を始め、シリアルに `[mon] IP=...` が出る。その IP をブラウザで開く（`w` でもう一度出せる）。IP を固定するときは `wifi_secrets.h` の4行を有効にする（DHCP の範囲の外の番号）。調整値は monitor.cpp の先頭。
+  **モニタリング（スプリント3.6-2）**：`src/l8cx_ranging/wifi_secrets.example.h` を `wifi_secrets.h` にコピーして値を書く（.gitignore 済み。なければ Wi-Fi なしで動く）。起動の 20 秒後（`MONITOR_BASELINE_MS`）に Wi-Fi を始め、シリアルに `[mon] IP=...` が出る。その IP をブラウザで開く（`w` でもう一度出せる）。当面は DHCP で使う（2026-10-31）。IP を固定するときは `wifi_secrets.h` の4行を有効にする（DHCP の範囲の外の番号）。調整値は monitor.cpp の先頭。
 
 ## 3. 試験の集計・足あとの読み方と保存
 
