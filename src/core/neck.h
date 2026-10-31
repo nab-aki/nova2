@@ -34,8 +34,11 @@ const char *Neck_OwnerName(NeckOwner owner);
 // 首が止まっていて、測距値を信用してよいか
 bool Neck_IsSteady(unsigned long nowMs);
 
-// 正面・水平か（走り出してよい条件のひとつ）
+// 正面・水平か
 bool Neck_IsFront(void);
+
+// 走行姿勢・水平か（走り出してよい条件のひとつ）
+bool Neck_IsDrivePose(void);
 
 // loop() から毎回呼ぶ。安定したかどうかを見て、変化をシリアルに出す
 void Neck_Update(unsigned long nowMs);

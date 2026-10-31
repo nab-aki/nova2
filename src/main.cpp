@@ -113,7 +113,7 @@ static void PrintStatus(unsigned long nowMs) {
   TofView_FormatStatus(tof, sizeof(tof), nowMs);
 
   Log_Printf("状態",
-             "距離:%s 障害物:%s(近%d/%d) ToF影:%s 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
+             "距離:%s 障害物:%s(近%d/%d) ToF:%s 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
              "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s 気づき停止:%d回 ジャイロ:%s",
              distance,
              Obstacle_IsBlocked() ? "あり" : "なし", Obstacle_NearCount(), Obstacle_SampleCount(), tof,
@@ -124,6 +124,7 @@ static void PrintStatus(unsigned long nowMs) {
              Servo_GetAngle(SERVO_PAN), Servo_GetAngle(SERVO_TILT),
              Neck_OwnerName(Neck_Owner()), Neck_IsSteady(nowMs) ? "安定" : "動作中",
              Safety_IsStopping() ? " 安全:停止中" : "",
+             Safety_IsTofStopped() ? " ToF で停止中" :
              Safety_IsTrackLost() ? " ライン読めず" :
              (Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : "")),
              Eyes_Name(Eyes_Get()),
@@ -160,6 +161,7 @@ static void PrintKeyHelp(void) {
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
   Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
   Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
+  Log_Printf("キー", "b:%dms の間、ToF の1枚を届けない（途切れで止まる試験。床の上で、歩き出してから押す）", TOF_DEBUG_HOLD_MS);
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -184,8 +186,9 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs, int target
     return;
   }
   if (Safety_IsLifted()) {
-    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
-                                                  : "持ち上げられているので無視します");
+    Log_Printf("キー", "%s", Safety_IsTofStopped() ? "ToF が使えず止めているので無視します"
+                             : Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                    : "持ち上げられているので無視します");
     return;
   }
   if (troubleBehavior.isBusy()) {
@@ -225,8 +228,9 @@ static void RequestDebugScan(bool tiltWithFirst) {
     return;
   }
   if (Safety_IsLifted()) {
-    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
-                                                  : "持ち上げられているので無視します（床に置いてから押してください）");
+    Log_Printf("キー", "%s", Safety_IsTofStopped() ? "ToF が使えず止めているので無視します"
+                             : Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                    : "持ち上げられているので無視します（床に置いてから押してください）");
     return;
   }
   debugScanBehavior.request(tiltWithFirst);
@@ -413,6 +417,7 @@ static void HandleSerialKeys(void) {
         break;
       case 'y': TofView_PrintFrame(); break;
       case 'c': TofView_PrintMismatchFrames(); break;
+      case 'b': TofView_HoldFrames(now); break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
@@ -480,7 +485,7 @@ void setup() {
   Arbiter_Register(&blinkBehavior);
 
   Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、%s",
-             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG,
+             OBSTACLE_SHOWN_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG,
              Pause_IsPaused() ? "一時停止から始めます（p で再開）" : "うろうろを始めます");
   PrintKeyHelp();
 }

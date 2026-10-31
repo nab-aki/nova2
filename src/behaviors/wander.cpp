@@ -144,7 +144,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (nowMs - stateStartMs_ < WANDER_REST_MS) {
         return;
       }
-      scan_.begin(SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
+      scan_.begin(SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_FRONT, nowMs);
       return;
 
@@ -198,11 +198,11 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_FACE_FRONT:
-      // 首を正面・水平に戻してから動き出す（設計原則2）
-      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, nowMs)) {
+      // 首を走行姿勢・水平に戻してから動き出す（設計原則2）
+      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, nowMs)) {
         return;
       }
-      if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
+      if (!Neck_IsDrivePose() || !Neck_IsSteady(nowMs)) {
         return;
       }
       Neck_Release(NECK_OWNER_RANGE);
@@ -278,11 +278,11 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       return;
 
     case STATE_READY:
-      // 首が正面で安定し、測距の履歴がたまり、正面が空いてから歩き出す
+      // 首が走行姿勢で安定し、動きのあとの判定が決まり、通路が空いてから歩き出す
       if (Obstacle_IsBlocked() || !Obstacle_IsReady()) {
         return;   // 塞がっていれば ID9 が引き継ぐので、ここで待つ
       }
-      if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
+      if (!Neck_IsDrivePose() || !Neck_IsSteady(nowMs)) {
         return;
       }
       if (StuckWatch_WantShortRun()) {

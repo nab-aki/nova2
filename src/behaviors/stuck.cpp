@@ -119,14 +119,14 @@ void StuckBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
 
   switch (state_) {
     case STATE_SETTLE:
-      // 車体が止まり、首が正面・水平で安定してから考え始める（見回しの途中で気づいたときは首を戻す）
+      // 車体が止まり、首が走行姿勢・水平で安定してから考え始める（見回しの途中で気づいたときは首を戻す）
       if (!Motion_IsStill()) {
         return;
       }
-      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, nowMs)) {
+      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, nowMs)) {
         return;
       }
-      if (!Neck_IsFront() || !Neck_IsSteady(nowMs)) {
+      if (!Neck_IsDrivePose() || !Neck_IsSteady(nowMs)) {
         return;
       }
       Neck_Release(NECK_OWNER_RANGE);   // 動く間は安全層が首を正面に固定する

@@ -2,6 +2,13 @@
 
 #include "../config.h"
 #include "../hal/hal_log.h"
+#include "tof_view.h"
+
+#if TOF_ENABLE
+#define US_LOG_TAG "超音波"
+#else
+#define US_LOG_TAG "障害物"
+#endif
 
 // 1回の測距の分類
 struct Sample {
@@ -43,6 +50,7 @@ void Obstacle_Reset(void) {
   head = 0;
   emergency = false;
   // blocked は変えない（履歴がたまり直すまで、いまの判定を保つ）
+  TofView_Reset();   // ToF の判定は持ち越さず、不明から始める
 }
 
 int Obstacle_NearCount(void) {
@@ -110,25 +118,45 @@ void Obstacle_Update(const SensorData &sensors, unsigned long nowMs) {
 
   if (blocked != before) {
     if (blocked) {
-      Log_Printf("障害物", "あり（直近%d回のうち%d回が%.0fcm未満。直近の距離 %.1fcm）",
+      Log_Printf(US_LOG_TAG, "あり（直近%d回のうち%d回が%.0fcm未満。直近の距離 %.1fcm）",
                  sampleCount, Obstacle_NearCount(), OBSTACLE_STOP_CM, lastCm);
     } else {
-      Log_Printf("障害物", "なし（直近%d回のうち%d回が%.0fcm以上。直近の距離 %.1fcm）",
+      Log_Printf(US_LOG_TAG, "なし（直近%d回のうち%d回が%.0fcm以上。直近の距離 %.1fcm）",
                  sampleCount, ClearCount(), OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM, lastCm);
     }
   }
 }
 
-bool Obstacle_IsBlocked(void) {
+bool Obstacle_UsIsBlocked(void) {
   return blocked;
 }
 
+bool Obstacle_UsIsReady(void) {
+  return sampleCount >= OBSTACLE_HISTORY;
+}
+
+bool Obstacle_IsBlocked(void) {
+#if TOF_ENABLE
+  return TofView_IsBlocked();
+#else
+  return blocked;
+#endif
+}
+
 bool Obstacle_IsEmergency(void) {
+#if TOF_ENABLE
+  return TofView_IsEmergency();
+#else
   return emergency;
+#endif
 }
 
 bool Obstacle_IsReady(void) {
-  return sampleCount >= OBSTACLE_HISTORY;
+#if TOF_ENABLE
+  return TofView_IsKnown();
+#else
+  return Obstacle_UsIsReady();
+#endif
 }
 
 int Obstacle_SampleCount(void) {
@@ -136,7 +164,11 @@ int Obstacle_SampleCount(void) {
 }
 
 float Obstacle_LastCm(void) {
+#if TOF_ENABLE
+  return TofView_LastCm();
+#else
   return lastCm;
+#endif
 }
 
 // 履歴の中の有効な測距値から、最も古いものと最も新しいものを使って接近速度を求める

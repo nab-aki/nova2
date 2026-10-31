@@ -266,8 +266,8 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         }
         checkValidCount_++;
       }
-      if (!Obstacle_IsReady()) {
-        return;   // 5回たまるまで判定しない
+      if (!Obstacle_IsReady() || !Obstacle_UsIsReady()) {
+        return;   // 判定が決まり、超音波が5回たまるまで判定しない（段1 の測り直しは超音波のまま）
       }
       // 経過の記録（判定に使った値を、そのまま残す）
       if (logNow_ != nullptr && steps_ >= 1 && steps_ <= TROUBLE_MAX_STEPS) {

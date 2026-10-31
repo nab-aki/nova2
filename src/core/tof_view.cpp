@@ -6,6 +6,7 @@
 #include "../hal/hal_log.h"
 #include "../hal/hal_servo.h"
 #include "../hal/hal_tof.h"
+#include "gyro.h"
 #include "motion.h"
 #include "neck.h"
 #include "obstacle.h"
@@ -27,9 +28,17 @@ static unsigned long lastUnstableMs = 0;   // 車体か首が動いていた最�
 static bool wasTofStarted = false;
 static bool startReported = false;
 
-// 影の判定
-static bool shadowBlocked = false;
+// 判定
+static bool judgeKnown = false;        // false＝不明（動いたあと、まだ判定に足りる枚を見ていない）
+static int unknownFrames = 0;          // 不明になってから判定に使った枚数
+static bool judgedBlocked = false;
+static bool emergencyNow = false;
 static int nearestMm = -1;
+static int lastMm = -1;                // 通路の中の最も近い距離の最新の値（見えなくなっても残す）
+static bool frameLost = false;         // データが途切れて止めている
+static int recoverRun = 0;             // 途切れのあと続けて届いた枚数
+static unsigned long holdUntilMs = 0;  // キー b：この時刻まで1枚を受け取らない
+static bool holding = false;
 static int nearRun = 0;                // 通路の中の障害物が続いた枚数
 static int nearRunColumn = NO_COLUMN;  // 前の枚で最も近かったマスの列
 static int clearRun = 0;               // 通路が「なし」の距離まで空いている枚が続いた数
@@ -55,13 +64,12 @@ static unsigned long lastUsOnsetMs = 0;
 static unsigned long lastShadowOnsetMs = 0;
 static bool shadowOnsetWaiting = false;   // 影が先に「あり」になり、超音波を待っている
 static bool usOnsetWaiting = false;       // 超音波が先に「あり」になり、影を待っている
-static unsigned long shadowSinceMs = 0;   // 影がいまの「あり」になった時刻（前進中に限らない）
 
 // 超音波と ToF が食い違った回の記録。「あり」になった時点で作り始め、相手が時間内に来なければ残す
 enum MismatchKind {
   MISMATCH_TOF_ONLY,     // ToF だけ「あり」
   MISMATCH_US_ONLY,      // 超音波だけ「あり」
-  MISMATCH_US_OLD,       // 超音波が「あり」になったとき、影は前から「あり」のまま
+  MISMATCH_US_OLD,       // 超音波が「あり」になったとき、ToF は前から「あり」のまま
 };
 
 struct MismatchFollow {
@@ -74,7 +82,6 @@ struct MismatchFollow {
 
 struct Mismatch {
   uint8_t kind;
-  bool carried;          // 影の「あり」が、回転か首の動きをまたいで残っていた
   uint32_t timeMs;
   float speed;
   float usStartCm;       // 始めたときの超音波の生値。反応なしは負
@@ -210,7 +217,6 @@ static void MismatchBegin(Mismatch *m, MismatchKind kind, unsigned long nowMs) {
   ScanCorridor(&scan);
   *m = Mismatch{};
   m->kind = (uint8_t)kind;
-  m->carried = (long)(shadowSinceMs - lastUnstableMs) < 0;
   m->timeMs = nowMs;
   m->speed = Motion_GetSpeed();
   m->usStartCm = s.distanceRawCm;
@@ -288,7 +294,7 @@ static void RecordUsOnset(unsigned long nowMs) {
     leadCount++;
     return;
   }
-  if (shadowBlocked) {
+  if (judgedBlocked) {
     usOnsetsMatched++;   // 影はもっと前から「あり」のまま（先の時間は数えない）
     if (wasTofStarted) {
       MismatchBegin(&pendingUs, MISMATCH_US_OLD, nowMs);
@@ -316,6 +322,7 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   ScanCorridor(&scan);
   float bestX = scan.bestX;
   int bestCol = scan.bestCol;
+  emergencyNow = scan.emergency;
   tooNearZones += scan.tooNear;
   if (scan.emergency) {
     if (movingForward) {
@@ -331,6 +338,9 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
     MismatchAddFollow(&pendingUs, scan, nowMs);
   }
   nearestMm = (bestCol == NO_COLUMN) ? -1 : (int)bestX;
+  if (nearestMm >= 0) {
+    lastMm = nearestMm;
+  }
 
   // 「あり」：通路の中の障害物が2枚続く（2枚の間で列のずれは ±1 まで）
   bool near = bestCol != NO_COLUMN && bestX < TOF_STOP_MM;
@@ -345,20 +355,24 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   bool clear = bestCol == NO_COLUMN || bestX >= TOF_STOP_MM + TOF_CLEAR_MARGIN_MM;
   clearRun = clear ? clearRun + 1 : 0;
 
-  bool before = shadowBlocked;
-  if (!shadowBlocked && nearRun >= TOF_NEAR_FRAMES) {
-    shadowBlocked = true;
-  } else if (shadowBlocked && clearRun >= TOF_NEAR_FRAMES) {
-    shadowBlocked = false;
-  }
-  if (shadowBlocked != before) {
-    if (shadowBlocked) {
-      shadowSinceMs = nowMs;
+  bool before = judgedBlocked;
+  if (!judgeKnown) {
+    if (++unknownFrames < TOF_NEAR_FRAMES) {
+      return;
     }
-    Log_Printf("ToF", "影の判定：%s（通路の中の最も近い距離 %dmm。超音波は %s）",
-               shadowBlocked ? "あり" : "なし", nearestMm, Obstacle_IsBlocked() ? "あり" : "なし");
+    // 不明から決めるときは、「なし」と言い切れなければ「あり」にする（38〜48cm の間で歩き出して、すぐ止まるのを防ぐ）
+    judgeKnown = true;
+    judgedBlocked = clearRun < TOF_NEAR_FRAMES;
+  } else if (!judgedBlocked && nearRun >= TOF_NEAR_FRAMES) {
+    judgedBlocked = true;
+  } else if (judgedBlocked && clearRun >= TOF_NEAR_FRAMES) {
+    judgedBlocked = false;
+  }
+  if (judgedBlocked != before) {
+    Log_Printf("ToF", "判定：%s（通路の中の最も近い距離 %dmm。超音波は %s）",
+               judgedBlocked ? "あり" : "なし", nearestMm, Obstacle_UsIsBlocked() ? "あり" : "なし");
     // 超音波が先に止めた回は、速度が 0 でも対応を取る（止めたあとの滑走中に影が「あり」になる）
-    if (shadowBlocked && (movingForward || usOnsetWaiting)) {
+    if (judgedBlocked && (movingForward || usOnsetWaiting)) {
       RecordShadowOnset(nowMs);
     }
   }
@@ -371,7 +385,7 @@ void TofView_Setup(void) {
   }
   frame = TofFrame{};
   Tof_Setup();
-  Log_Printf("ToF", "段0：判定は記録するだけで、動きには使いません（超音波で走ります）");
+  Log_Printf("ToF", "段1：止まる判断に使います（見回しは超音波のまま。床のマスでは止めません）");
 }
 
 void TofView_GetCounts(TofCounts *out) {
@@ -401,7 +415,7 @@ static void ReportStart(void) {
       wasTofStarted = true;
       break;
     case TOF_STATE_FAILED:
-      Log_Printf("ToF", "起動に失敗：%s=%u（is_alive %d回 alive=%u SDA=%d SCL=%d）。この起動中は使いません（段0 は超音波で走り続けます）",
+      Log_Printf("ToF", "起動に失敗：%s=%u（is_alive %d回 alive=%u SDA=%d SCL=%d）。この起動中は走りません",
                  s.failName != NULL ? s.failName : "?", s.failStep, s.aliveTries, s.alive, s.sdaLevel, s.sclLevel);
       break;
     case TOF_STATE_DISABLED:
@@ -415,7 +429,7 @@ static void ReportStart(void) {
 
 // 前進中の超音波の「あり」を数える（影と比べるため）
 static void WatchUltrasonic(unsigned long nowMs) {
-  bool usBlocked = Obstacle_IsBlocked();
+  bool usBlocked = Obstacle_UsIsBlocked();
   // ToF が先に止めた回は、超音波の「あり」が速度 0 で立つので、ToF を待たせている間は速度によらず数える
   if (usBlocked && !usBlockedBefore && (Motion_GetSpeed() >= MOTOR_SPEED_EPSILON || shadowOnsetWaiting)) {
     RecordUsOnset(nowMs);
@@ -452,7 +466,9 @@ void TofView_Update(unsigned long nowMs) {
   // 回転中と、首が動いている（または水平でない）間は「動いていた」とする
   bool neckOk = Neck_IsSteady(nowMs) && Servo_GetAngle(SERVO_TILT) == SERVO2_LEVEL_DEG &&
                 abs(Servo_GetAngle(SERVO_PAN) - SERVO1_FRONT_DEG) <= NECK_DRIVE_TRIM_RIGHT_DEG;
-  if (Motion_IsTurning() || !neckOk) {
+  // 回転を止めたあとの惰性も「動いている」に入れる（前進中の揺れでは捨てない）
+  bool coasting = Motion_GetSpeed() < MOTOR_SPEED_EPSILON && fabsf(Gyro_YawRateDps()) > TOF_SETTLE_YAW_DPS;
+  if (Motion_IsTurning() || !neckOk || coasting) {
     lastUnstableMs = nowMs;
   }
 
@@ -460,14 +476,16 @@ void TofView_Update(unsigned long nowMs) {
     return;
   }
 
-  // 途切れの見張り（段0 は数えるだけ）
+  // 途切れの見張り（止めるのは安全層。TofView_CanDrive を見る）
   if (haveFrame) {
     uint32_t age = (uint32_t)max((long)(nowMs - frame.readyMs), 0L);
     if (age > TOF_STALE_MS) {
       if (!inStale) {
         inStale = true;
         staleEvents++;
-        Log_Printf("ToF", "データが途切れています（最新の1枚 %lums 前。段0 は止まりません）", (unsigned long)age);
+        frameLost = true;
+        recoverRun = 0;
+        Log_Printf("ToF", "データが途切れました（最新の1枚 %lums 前）。すべての動きを止めます", (unsigned long)age);
       }
       if (age > staleMaxMs) staleMaxMs = age;
     } else {
@@ -475,10 +493,27 @@ void TofView_Update(unsigned long nowMs) {
     }
   }
 
+  if (holding) {
+    if ((long)(nowMs - holdUntilMs) < 0) {
+      return;   // キー b：1枚を届けない
+    }
+    holding = false;
+  }
   if (!Tof_GetLatest(frame.seq, &frame)) {
     return;
   }
   haveFrame = true;
+
+  // 途切れから戻るのは、続けて届いてから。init はやり直さない
+  if (frameLost) {
+    if (++recoverRun < TOF_RECOVER_FRAMES) {
+      return;
+    }
+    frameLost = false;
+    TofView_Reset();
+    Log_Printf("ToF", "データが戻りました（%d枚続けて届いた）", TOF_RECOVER_FRAMES);
+    return;
+  }
 
   // 1枚の間に動きが終わっていない枚は捨てる（読み終えた時刻 − 1枚の時間 が、動きの終わりより後の枚だけを使う）
   if ((long)(frame.readyMs - TOF_FRAME_MS - lastUnstableMs) <= 0) {
@@ -494,8 +529,62 @@ void TofView_Update(unsigned long nowMs) {
   JudgeFrame(Motion_GetSpeed() >= MOTOR_SPEED_EPSILON, nowMs);
 }
 
-bool TofView_ShadowBlocked(void) {
-  return shadowBlocked;
+void TofView_Reset(void) {
+  lastUnstableMs = millis();
+  judgeKnown = false;
+  judgedBlocked = false;
+  emergencyNow = false;
+  unknownFrames = 0;
+  nearRun = 0;
+  nearRunColumn = NO_COLUMN;
+  clearRun = 0;
+}
+
+bool TofView_IsKnown(void) {
+  return judgeKnown;
+}
+
+bool TofView_IsBlocked(void) {
+  return judgeKnown && judgedBlocked;
+}
+
+bool TofView_IsEmergency(void) {
+  return emergencyNow;
+}
+
+float TofView_LastCm(void) {
+  return lastMm >= 0 ? lastMm / 10.0f : -1.0f;
+}
+
+bool TofView_CanDrive(void) {
+#if TOF_ENABLE
+  return wasTofStarted && haveFrame && !frameLost;
+#else
+  return true;
+#endif
+}
+
+const char *TofView_StopReason(void) {
+  TofStats s;
+  Tof_GetStats(&s);
+  if (s.state == TOF_STATE_FAILED) {
+    return "ToF の起動に失敗。この起動中は走りません（電池と USB を入れ直してください）";
+  }
+  if (!wasTofStarted || !haveFrame) {
+    return "ToF の起動を待っています";
+  }
+  return "ToF のデータが途切れています";
+}
+
+void TofView_HoldFrames(unsigned long nowMs) {
+#if TOF_ENABLE
+  holding = true;
+  holdUntilMs = nowMs + TOF_DEBUG_HOLD_MS;
+  Log_Printf("ToF", "%dms の間、1枚を届けません（途切れで止まる試験）", TOF_DEBUG_HOLD_MS);
+#else
+  (void)nowMs;
+  Log_Printf("ToF", "このビルドでは使いません（TOF_ENABLE=0）");
+#endif
 }
 
 int TofView_NearestMm(void) {
@@ -513,7 +602,11 @@ void TofView_FormatStatus(char *buffer, size_t size, unsigned long nowMs) {
   }
   // 1枚は loop の先頭で取った nowMs より新しいことがある（引き算の桁あふれを防ぐ）
   long ageMs = max((long)(nowMs - frame.readyMs), 0L);
-  snprintf(buffer, size, "%s(%dmm,%ldms前)", shadowBlocked ? "あり" : "なし", nearestMm, ageMs);
+  if (!judgeKnown) {
+    snprintf(buffer, size, "不明(%ldms前)", ageMs);
+    return;
+  }
+  snprintf(buffer, size, "%s(%dmm,%ldms前)", judgedBlocked ? "あり" : "なし", nearestMm, ageMs);
 }
 
 static void PrintFloor(void) {
@@ -546,7 +639,7 @@ static const char *MismatchKindName(uint8_t kind) {
   switch (kind) {
     case MISMATCH_TOF_ONLY: return "ToFだけ";
     case MISMATCH_US_ONLY:  return "超音波だけ";
-    default:                return "超音波（影は前から）";
+    default:                return "超音波（ToF は前から「あり」）";
   }
 }
 
@@ -573,9 +666,9 @@ static void PrintMismatches(void) {
     else snprintf(us, sizeof(us), "%.1fcm", m->usStartCm);
     if (m->usMinCm < 0.0f) snprintf(usMin, sizeof(usMin), "なし");
     else snprintf(usMin, sizeof(usMin), "%.1fcm", m->usMinCm);
-    Log_Printf("ToF", "  %lu) %lums %s%s 速度%.2f 超音波 %s（最小 %s） 通路の最も近い %dmm(r%d c%d) r0-4測れず %u 1枚の古さ %ums 判定 %u枚 捨てた %u枚",
+    Log_Printf("ToF", "  %lu) %lums %s 速度%.2f 超音波 %s（最小 %s） 通路の最も近い %dmm(r%d c%d) r0-4測れず %u 1枚の古さ %ums 判定 %u枚 捨てた %u枚",
                (unsigned long)(i + 1), (unsigned long)m->timeMs, MismatchKindName(m->kind),
-               m->carried ? "・動きをまたいだ" : "", m->speed, us, usMin, m->nearestMm, m->row, m->col,
+               m->speed, us, usMin, m->nearestMm, m->row, m->col,
                m->upperInvalid, m->frameAgeMs, m->judged, m->skipped);
     char line[192];
     int used = 0;
@@ -631,13 +724,13 @@ void TofView_Print(void) {
              (unsigned long)staleEvents, (unsigned long)staleMaxMs, (unsigned long)s.stackFree,
              (unsigned long)s.stackFreeAtStart, s.stackFree < TOF_STACK_MIN_FREE ? "【少ない】" : "",
              (unsigned long)s.polls, s.frames > 0 ? (float)s.polls / s.frames : 0.0f);
-  Log_Printf("ToF", "影の比較（起動から・前進中）：影の「あり」%lu回（超音波も ±%dms で「あり」%lu回）／超音波の「あり」%lu回（影も %lu回）／両方の回で影が先の平均 %ldms",
+  Log_Printf("ToF", "超音波との比較（起動から）：ToF の「あり」%lu回（超音波も ±%dms で「あり」%lu回）／超音波の「あり」%lu回（ToF も %lu回）／両方の回で ToF が先の平均 %ldms",
              (unsigned long)shadowOnsets, TOF_US_MATCH_MS, (unsigned long)shadowOnsetsMatched,
              (unsigned long)usOnsets, (unsigned long)usOnsetsMatched,
              leadCount > 0 ? leadSumMs / (long)leadCount : 0L);
   Log_Printf("ToF", "判定に使った %lu 枚／動きをまたいで捨てた %lu 枚 非常停止の距離より近い枚 前進中 %lu／それ以外 %lu 状態によらず「近すぎ」のマス %lu いま：%s",
              (unsigned long)framesJudged, (unsigned long)framesSkipped, (unsigned long)emergencyFramesForward,
-             (unsigned long)emergencyFrames, (unsigned long)tooNearZones, shadowBlocked ? "あり" : "なし");
+             (unsigned long)emergencyFrames, (unsigned long)tooNearZones, judgedBlocked ? "あり" : "なし");
   PrintFloor();
   PrintMismatches();
 }

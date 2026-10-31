@@ -107,6 +107,10 @@
 #define TOF_TOO_NEAR_MM             50      // 【仮】状態によらず「近すぎ」とみなす距離（状態 255 で 20〜30mm が出るため）
 #define TOF_STATUS_VALID_A          5       // 【仮】有効とみなす状態（番号の意味は ST の資料で未確認）
 #define TOF_STATUS_VALID_B          9
+#define TOF_RECOVER_FRAMES          3       // 途切れのあと、これだけ続けて届いたら戻す
+#define TOF_STOP_LOG_MS             1000    // ToF で止めている間、理由を出す間隔
+#define TOF_SETTLE_YAW_DPS          20.0f   // 【仮】止めたあとの惰性がこれより速い間は「動いている」とする（前進中は見ない）
+#define TOF_DEBUG_HOLD_MS           1000    // キー b：1枚を届けない時間（途切れで止まる試験）
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
@@ -118,7 +122,11 @@
 
 // 走行姿勢（首を右へずらして、左右の通路の縁が見え始める距離をそろえる。段1 から使う）
 #define NECK_DRIVE_TRIM_RIGHT_DEG   8       // 【仮】実測の寸法でそろう角度は 7.5°（common_tof_scan.md 3.6）
-#define SERVO1_DRIVE_DEG            (SERVO1_FRONT_DEG - SERVO1_LEFT_SIGN * NECK_DRIVE_TRIM_RIGHT_DEG)   // 76°。今はまだ使わない
+#if TOF_ENABLE
+#define SERVO1_DRIVE_DEG            (SERVO1_FRONT_DEG - SERVO1_LEFT_SIGN * NECK_DRIVE_TRIM_RIGHT_DEG)   // 76°
+#else
+#define SERVO1_DRIVE_DEG            SERVO1_FRONT_DEG   // fnk0053_notof は今までどおり正面
+#endif
 
 // loop の周期の記録（段0 で ToF のタスクの影響を見る）
 #define LOOP_SLOW_MS                20      // これより長い loop を「遅い」として数える
@@ -198,6 +206,11 @@
 #define OBSTACLE_STOP_CM            36.0f   // 停止閾値
 #define OBSTACLE_CLEAR_MARGIN_CM    10.0f   // ヒステリシス：36+10=46cm 以上に戻ったら「なくなった」
 #define OBSTACLE_EMERGENCY_CM       12.0f   // 1回でもこれ未満なら多数決を待たず即停止
+#if TOF_ENABLE
+#define OBSTACLE_SHOWN_STOP_CM      (TOF_STOP_MM / 10.0f)   // ログに出す停止閾値
+#else
+#define OBSTACLE_SHOWN_STOP_CM      OBSTACLE_STOP_CM
+#endif
 #define OBSTACLE_SPEED_MIN_MS       150     // 接近速度を求めるのに必要な最小の時間差
 
 // ------------------------ 巡航 ------------------------ //
@@ -310,8 +323,11 @@
 // 片側だけ測れなかったとき（浅い角度の壁はエコーが返らない）、測れた側がこれ以上なら測れた側へ、
 // これ未満なら測れなかった側へ回る（測れなかった側を「遠い」とはみなさない。2026-09-24）
 #define TROUBLE_KNOWN_FAR_CM        50.0f
-#define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
-                                            // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
+#if TOF_ENABLE
+#define TROUBLE_CLEAR_CM            48.0f   // 正面が「空いた」と認める距離。TOF_STOP_MM + TOF_CLEAR_MARGIN_MM と同じ値にしてある
+#else
+#define TROUBLE_CLEAR_CM            46.0f   // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
+#endif
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
 // 【2026-10-04 変更】700→200ms（暫定）→425ms（確定）。PWM2000・キックなし・粗面化後のタイヤで測り直した：
 // 200ms で 12°（30回で一周）、500ms で 36°（10回で一周）。回る角度 ≒ 0.08°/ms × (時間 − 50ms)。
