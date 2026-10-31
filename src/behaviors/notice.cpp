@@ -5,6 +5,7 @@
 #include "../core/motion.h"
 #include "../core/obstacle.h"
 #include "../core/test_stats.h"
+#include "../core/tof_view.h"
 #include "../hal/hal_log.h"
 
 // ------------------------ 車体 ------------------------ //
@@ -77,6 +78,7 @@ void NoticeBehavior::ReportStop(unsigned long nowMs) {
 
   stopCount_++;
   TestStats_RecordNoticeStop(restCm, noticedWhileTurning_);
+  TofView_ReportStop();
   const char *turnNote = noticedWhileTurning_ ? "、回転中の検知として別途カウント" : "";
   if (slide >= 0.0f) {
     Log_Printf("気づく", "停止後の距離 %.1fcm（気づいたとき %.1fcm、滑走 %.1fcm、閾値 %.0fcm%s）通算%d回目",

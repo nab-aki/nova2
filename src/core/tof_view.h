@@ -26,6 +26,23 @@ void TofView_GetCounts(TofCounts *out);
 // loop() から毎回呼ぶ。Obstacle_Update のあとに呼ぶ（超音波の判定と比べるため）
 void TofView_Update(unsigned long nowMs);
 
+// 距離が使えるマスか（有効、または状態によらず近すぎ）
+bool TofView_IsValidStatus(uint8_t status);
+bool TofView_IsUsable(uint8_t status, int distanceMm);
+
+// 首が panDeg を向いているときのマスの点を、前後 x（首が正面のときのセンサーの位置から）・左右 y（中心線から。左が正）・
+// 床からの高さ z に直す。首の回転軸からセンサーまでの距離と、センサーの左へのずれを入れる
+void TofView_PointForPan(int row, int col, int distanceMm, int panDeg, float *x, float *y, float *z);
+
+// r5〜r7 の床の想定距離（mm）
+float TofView_FloorExpectedMm(int row);
+
+// 車体と首が1枚の間ずっと止まっていた新しい1枚があれば out に渡す（首の向きは問わない）
+bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out);
+
+// 気づいて止まったときに呼ぶ。止まったあとの3枚で前端の隙間・横の余裕を記録する
+void TofView_ReportStop(void);
+
 // 判定を捨てて「不明」に戻す。このあと動きが終わってから取った枚だけで判定し直す
 void TofView_Reset(void);
 

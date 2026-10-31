@@ -47,6 +47,22 @@ struct TestRecord {
   uint32_t tofStaleEvents;      // この試験の間のデータの途切れの回数
   uint32_t tofStaleMaxMs;       // 最も長い途切れ（起動から）
   uint32_t tofPeriodMaxMs;      // 周期の最大（起動から）
+  uint32_t loopForwardVerySlowCount;   // 前進中に LOOP_VERY_SLOW_MS より長かった回数
+  uint16_t farClearCount;       // 「遠くて空き」とした回数
+  uint16_t blindNoWalkCount;    // 見えていないので歩かなかった回数
+  uint16_t blindGiveupCount;    // 見えていない向きが続いて、回るのをやめた回数
+  uint16_t blindStopCount;      // 前進中に見えていない状態が続いて止まった回数
+  uint16_t neckLookCount;       // 首を振って見た回数
+  uint16_t neckSuspectCount;    // そのうち「動かなかった疑い」の回数
+  uint16_t samePlaceCount;      // 同じ場所で困るが続けて起きた回数
+  int16_t gapMinMm;             // 前端の隙間の最小。まだなければ負
+  int16_t sideMinMm;            // 横の余裕の最小。まだなければ負
+  uint32_t wanderWaitSumMs;     // 止まってから歩き出すまでの合計（困るを挟まない回）
+  uint32_t wanderWaitMaxMs;
+  uint16_t wanderWaitCount;
+  uint32_t troubleWaitSumMs;    // 同じく、困るを挟んだ回
+  uint32_t troubleWaitMaxMs;
+  uint16_t troubleWaitCount;
 };
 
 // NVSに保存する全体。直近3回分のリングバッファ
@@ -57,7 +73,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E34u  // "TSN4"（歩いた回数・前進の合計・loop の周期・ToF の数を足した）
+#define TEST_STATS_MAGIC  0x54534E35u  // "TSN5"（段2 の項目を足した）
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -65,6 +81,12 @@ static unsigned long testStartMs = 0;
 static unsigned long lastSaveMs = 0;
 static bool recording = false;        // 再開してから一時停止するまでの間か
 static bool pendingSave = false;      // 一時停止したが、まだ止まりきっていないため保存を待っている
+static unsigned long lastForwardEndMs = 0;   // 前進が終わった時刻
+static bool forwardEnded = false;            // 前進が終わってから、まだ歩き出していない
+static bool wasForward = false;
+static bool troubleSinceForward = false;     // 前進が終わってから困るが始まった
+static uint32_t forwardAtLastTrouble = 0;    // 前回の困るのときの前進の合計
+static int samePlaceRun = 0;                 // 同じ場所で困るが続いた回数
 static bool flashWaiting = false;     // リングには写したが、フラッシュにまだ書いていない（次に止まったときに書く）
 static uint8_t bootResetCode = 0;     // このブートのリセット理由（新しい試験を始めるたびに記録に刻む）
 static TofCounts tofBase;             // 試験を始めたときの ToF の数（差をこの試験の分として残す）
@@ -85,6 +107,8 @@ static void RefreshTofCounts(void) {
 static void ResetRecord(TestRecord *r) {
   *r = TestRecord{};
   r->stopDistMinCm = -1.0f;   // まだ値がない
+  r->gapMinMm = -1;
+  r->sideMinMm = -1;
 }
 
 // リングを1つ進めて、新しい試験の枠にする
@@ -98,6 +122,11 @@ static void BeginNewTest(unsigned long nowMs) {
   TofView_GetCounts(&tofBase);
   testStartMs = nowMs;
   lastSaveMs = nowMs;
+  forwardEnded = false;
+  wasForward = false;
+  troubleSinceForward = false;
+  forwardAtLastTrouble = 0;
+  samePlaceRun = 0;
   recording = true;
   pendingSave = false;
   Log_Printf("試験", "新しい試験を始めます（%d回目の枠。起動理由：%s）",
@@ -158,9 +187,16 @@ void TestStats_Setup(bool startPaused, unsigned long nowMs) {
 
 void TestStats_Update(unsigned long nowMs) {
   static unsigned long lastUpdateMs = 0;
-  if (recording && Motion_GetSpeed() >= MOTOR_SPEED_EPSILON) {
+  bool forward = Motion_GetSpeed() >= MOTOR_SPEED_EPSILON;
+  if (recording && forward) {
     current.forwardMs += nowMs - lastUpdateMs;
   }
+  if (wasForward && !forward) {
+    lastForwardEndMs = nowMs;
+    forwardEnded = true;
+    troubleSinceForward = false;
+  }
+  wasForward = forward;
   lastUpdateMs = nowMs;
 
   if (!recording && !pendingSave && !flashWaiting) {
@@ -231,6 +267,12 @@ void TestStats_RecordTroubleStart(void) {
   if (!recording) {
     return;
   }
+  troubleSinceForward = true;
+  samePlaceRun = (current.forwardMs - forwardAtLastTrouble < TOF_SAME_PLACE_FORWARD_MS) ? samePlaceRun + 1 : 1;
+  forwardAtLastTrouble = current.forwardMs;
+  if (samePlaceRun == TOF_SAME_PLACE_COUNT) {
+    current.samePlaceCount++;
+  }
   current.troubleStarts++;
 }
 
@@ -281,6 +323,57 @@ void TestStats_RecordWalk(void) {
     return;
   }
   current.walkCount++;
+  if (forwardEnded) {
+    forwardEnded = false;
+    uint32_t waitMs = millis() - lastForwardEndMs;
+    if (troubleSinceForward) {
+      current.troubleWaitSumMs += waitMs;
+      current.troubleWaitCount++;
+      if (waitMs > current.troubleWaitMaxMs) current.troubleWaitMaxMs = waitMs;
+    } else {
+      current.wanderWaitSumMs += waitMs;
+      current.wanderWaitCount++;
+      if (waitMs > current.wanderWaitMaxMs) current.wanderWaitMaxMs = waitMs;
+    }
+  }
+}
+
+void TestStats_RecordFarClear(void) {
+  if (recording) current.farClearCount++;
+}
+
+void TestStats_RecordBlindNoWalk(void) {
+  if (recording) current.blindNoWalkCount++;
+}
+
+void TestStats_RecordBlindGiveup(void) {
+  if (recording) current.blindGiveupCount++;
+}
+
+void TestStats_RecordBlindStop(void) {
+  if (recording) current.blindStopCount++;
+}
+
+void TestStats_RecordNeckLook(bool onsetSeen) {
+  if (!recording) {
+    return;
+  }
+  current.neckLookCount++;
+  if (!onsetSeen) {
+    current.neckSuspectCount++;
+  }
+}
+
+void TestStats_RecordStopGap(int gapMm, int sideMm) {
+  if (!recording) {
+    return;
+  }
+  if (gapMm >= 0 && (current.gapMinMm < 0 || gapMm < current.gapMinMm)) {
+    current.gapMinMm = (int16_t)gapMm;
+  }
+  if (sideMm >= 0 && (current.sideMinMm < 0 || sideMm < current.sideMinMm)) {
+    current.sideMinMm = (int16_t)sideMm;
+  }
 }
 
 void TestStats_RecordLoopUs(uint32_t us) {
@@ -291,7 +384,10 @@ void TestStats_RecordLoopUs(uint32_t us) {
   current.loopSumUs += us;
   if (us > current.loopMaxUs) current.loopMaxUs = us;
   if (us > LOOP_SLOW_MS * 1000UL) current.loopSlowCount++;
-  if (us > LOOP_VERY_SLOW_MS * 1000UL) current.loopVerySlowCount++;
+  if (us > LOOP_VERY_SLOW_MS * 1000UL) {
+    current.loopVerySlowCount++;
+    if (Motion_GetSpeed() >= MOTOR_SPEED_EPSILON) current.loopForwardVerySlowCount++;
+  }
 }
 
 void TestStats_RecordLift(void) {
@@ -380,6 +476,12 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              r.stuckDetectFront + r.stuckDetectContact + r.stuckDetectSide,
              r.stuckDetectFront, r.stuckDetectContact, r.stuckDetectSide,
              r.stuckEscapedA, r.stuckEscapedB, r.stuckRepeat, r.stuckUnchangedMaxMs / 1000.0f);
+  Log_Printf("試験", "[%d]  段2：遠くて空き %u回 見えていないので歩かず %u回 回るのをやめた %u回 見えず停止 %u回 首を振った %u回（動かなかった疑い %u回） 同じ場所で困る %u回",
+             slot, r.farClearCount, r.blindNoWalkCount, r.blindGiveupCount, r.blindStopCount, r.neckLookCount, r.neckSuspectCount, r.samePlaceCount);
+  Log_Printf("試験", "[%d]  止まってから歩き出すまで：うろうろ 平均 %.1f秒／最大 %.1f秒（%u回） 困る 平均 %.1f秒／最大 %.1f秒（%u回） 前端の隙間の最小 %dmm 横の余裕の最小 %dmm 前進中の %dms 超 %lu回",
+             slot, r.wanderWaitCount > 0 ? r.wanderWaitSumMs / 1000.0f / r.wanderWaitCount : 0.0f, r.wanderWaitMaxMs / 1000.0f, r.wanderWaitCount,
+             r.troubleWaitCount > 0 ? r.troubleWaitSumMs / 1000.0f / r.troubleWaitCount : 0.0f, r.troubleWaitMaxMs / 1000.0f, r.troubleWaitCount,
+             r.gapMinMm, r.sideMinMm, LOOP_VERY_SLOW_MS, (unsigned long)r.loopForwardVerySlowCount);
   Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回・約 %lu回/秒。%dms 超 %lu回・%dms 超 %lu回）",
              slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
              (unsigned long)r.loopCount, elapsedMs > 0 ? (unsigned long)(r.loopCount * 1000.0f / elapsedMs) : 0UL,

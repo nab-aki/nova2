@@ -67,6 +67,14 @@ void TestStats_RecordWalk(void);
 // loop の周期（µs）。毎 loop 呼ぶ（スプリント3.6-3 段0。ToF のタスクの影響を見る）
 void TestStats_RecordLoopUs(uint32_t us);
 
+// 段2（common_tof_scan.md 9章）
+void TestStats_RecordFarClear(void);        // 上の段は測れず床が写るので「遠くて空き」とした
+void TestStats_RecordBlindNoWalk(void);     // 見えていないので歩かなかった
+void TestStats_RecordBlindGiveup(void);     // 見えていない向きが続いて、回るのをやめた
+void TestStats_RecordBlindStop(void);       // 前進中に見えていない状態が続いて止まった
+void TestStats_RecordNeckLook(bool onsetSeen);   // 首を振って見た。onsetSeen が false なら「動かなかった疑い」
+void TestStats_RecordStopGap(int gapMm, int sideMm);   // 止まったあとの前端の隙間と横の余裕。なければ負
+
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);
 

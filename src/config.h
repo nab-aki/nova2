@@ -111,11 +111,24 @@
 #define TOF_STOP_LOG_MS             1000    // ToF で止めている間、理由を出す間隔
 #define TOF_SETTLE_YAW_DPS          20.0f   // 【仮】止めたあとの惰性がこれより速い間は「動いている」とする（前進中は見ない）
 #define TOF_DEBUG_HOLD_MS           1000    // キー b：1枚を届けない時間（途切れで止まる試験）
+#define TOF_CENTER_TO_SENSOR_MM     120     // 車体の回転の中心から ToF の表面まで（前後。実測）
+#define TOF_NECK_TO_SENSOR_MM       120     // 首の左右の回転軸から ToF の表面まで（前後。首は正面 84°。ユーザーの実測 2026-10-31）
+#define TOF_ISOLATED_MM             60      // 【仮】隣のマスとの差がこれ以下なら孤立していない
+#define TOF_ISOLATED_RATIO          0.15f   // 【仮】同じく距離に対する割合（大きいほうを使う）
+#define TOF_VIEW_MIN_VALID          2       // 【仮】通路の中の有効なマスがこれ以上で「空き」と言える
+#define TOF_FLOOR_CHECK_ROW         6       // 床が写っているかを見る行（r6・r7）
+#define TOF_FLOOR_RATIO_FAR         1.50f   // 【仮】床とみなす比の上限（下限は TOF_FLOOR_RATIO）
+#define TOF_FLOOR_SEEN_RATIO        0.6f    // 【仮】通路に入る床のマスのうち、この割合が想定どおりなら「床が写る」
+#define TOF_LOOK_ONSET_WINDOW_MS    150     // 首への指示のあと、動き出しを見る時間
+#define TOF_LOOK_ONSET_DPS          2.0f    // 【仮】この時間に超えなければ「動かなかった疑い」と数える（記録だけ）
+#define TOF_SAME_PLACE_FORWARD_MS   1000    // 【仮】困るの間の前進の合計がこれ未満なら「同じ場所」とみなす
+#define TOF_SAME_PLACE_COUNT        3       // 「同じ場所」で困るがこの回数続いたら数える
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
 
 // 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
+#define TOF_FLOOR_RATIO             0.80f   // 【仮】床の想定距離のこの割合より近ければ床ではない（走行中の r6・r7 の谷。段1 の記録）
 #define TOF_FLOOR_RATIO_MIN         0.50f   // 分布の下の端
 #define TOF_FLOOR_RATIO_STEP        0.05f   // 分布の刻み
 #define TOF_FLOOR_RATIO_BINS        16      // 0.50〜1.30。外は端に入れる

@@ -13,6 +13,7 @@
 #include "safety.h"
 #include "sensors.h"
 #include "test_stats.h"
+#include "tof_look.h"
 
 #define FLOOR_ROW_FIRST 5   // 床が写る行（首が水平のとき。r5〜r7）
 #define FLOOR_ROWS      3
@@ -25,6 +26,26 @@ static float floorExpectedMm[FLOOR_ROWS];
 static TofFrame frame;                 // 最新の1枚（loop の中だけで使う）
 static bool haveFrame = false;
 static unsigned long lastUnstableMs = 0;   // 車体か首が動いていた最後の時刻
+static unsigned long lastMoveMs = 0;       // 車体か首が動いていた最後の時刻（首の向きは問わない。前進も入れる）
+
+// 前端の隙間（直近3枚の、車体の幅の中で孤立していないマスの x − 前端までの距離。なければ負）
+#define GAP_FRAMES 3
+#define NO_GAP (-1)
+struct GapCell {
+  int gapMm;
+  int row;
+  int col;
+  int distanceMm;
+  uint8_t status;
+  float x, y, z;
+};
+static GapCell gapHistory[GAP_FRAMES];
+static int sideHistory[GAP_FRAMES];
+static int gapHistoryCount = 0;
+static bool stopMinValid = false;
+static GapCell stopMin;              // 前端の隙間が最小だった停止
+static TofFrame stopMinFrame;        // そのときの1枚
+static int stopSideMinMm = NO_GAP;   // 横の余裕の最小
 static bool wasTofStarted = false;
 static bool startReported = false;
 
@@ -115,9 +136,45 @@ static inline bool IsValidStatus(uint8_t status) {
   return status == TOF_STATUS_VALID_A || status == TOF_STATUS_VALID_B;
 }
 
+bool TofView_IsValidStatus(uint8_t status) {
+  return IsValidStatus(status);
+}
+
 // 状態によらず近いとみなす距離か。0 は「値がない」かもしれないので入れない（厚紙で 20〜30mm が状態 255 で出た）
 static inline bool IsTooNear(int distanceMm) {
   return distanceMm > 0 && distanceMm < TOF_TOO_NEAR_MM;
+}
+
+bool TofView_IsUsable(uint8_t status, int distanceMm) {
+  return distanceMm > 0 && (IsValidStatus(status) || IsTooNear(distanceMm));
+}
+
+void TofView_PointForPan(int row, int col, int distanceMm, int panDeg, float *x, float *y, float *z) {
+  float pan = (panDeg - SERVO1_FRONT_DEG) * SERVO1_LEFT_SIGN * DEG_TO_RAD;   // 左が正
+  float az = (3.5f - col) * TOF_ZONE_DEG * DEG_TO_RAD + pan;
+  float el = (3.5f - row) * TOF_ZONE_DEG * DEG_TO_RAD;
+  float flat = distanceMm * cosf(el);
+  float cosP = cosf(pan);
+  float sinP = sinf(pan);
+  *x = TOF_NECK_TO_SENSOR_MM * cosP - TOF_SENSOR_Y_MM * sinP - TOF_NECK_TO_SENSOR_MM + flat * cosf(az);
+  *y = TOF_NECK_TO_SENSOR_MM * sinP + TOF_SENSOR_Y_MM * cosP + flat * sinf(az);
+  *z = TOF_SENSOR_HEIGHT_MM + distanceMm * sinf(el);
+}
+
+float TofView_FloorExpectedMm(int row) {
+  return floorExpectedMm[row - FLOOR_ROW_FIRST];
+}
+
+bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out) {
+  if (!haveFrame || frame.seq == *lastSeq) {
+    return false;
+  }
+  *lastSeq = frame.seq;
+  if ((long)(frame.readyMs - TOF_FRAME_MS - lastMoveMs) <= 0) {
+    return false;
+  }
+  *out = &frame;
+  return true;
 }
 
 // 首を実際に向けている角度から、右へのずらし α を求める（段0 は 0°、段1 から走行姿勢で 8°）
@@ -258,6 +315,66 @@ static void MismatchAddFollow(Mismatch *m, const CorridorScan &scan, unsigned lo
   f.speed = Motion_GetSpeed();
 }
 
+// この1枚の前端の隙間と横の余裕を、直近3枚の記録へ足す
+static void RecordGap(float trim) {
+  GapCell best;
+  best.gapMm = NO_GAP;
+  int side = NO_GAP;
+  for (int row = 0; row < FLOOR_ROW_FIRST; row++) {
+    for (int col = 0; col < COLS; col++) {
+      int z = row * COLS + col;
+      int d = frame.distanceMm[z];
+      if (!TofView_IsUsable(frame.status[z], d) || TofLook_IsIsolated(frame, row, col)) {
+        continue;
+      }
+      float x, y, h;
+      ZonePoint(row, col, d, trim, &x, &y, &h);
+      if (h >= TOF_HEAD_CLEAR_MM || fabsf(y) >= TOF_BODY_HALF_WIDTH_MM + TOF_CORRIDOR_MARGIN_MM) {
+        continue;
+      }
+      int gap = (int)x - TOF_FRONT_OFFSET_MM;
+      if (fabsf(y) > TOF_BODY_HALF_WIDTH_MM) {
+        if (side == NO_GAP || gap < side) side = max(gap, 0);
+        continue;
+      }
+      if (best.gapMm == NO_GAP || gap < best.gapMm) {
+        best = GapCell{max(gap, 0), row, col, d, frame.status[z], x, y, h};
+      }
+    }
+  }
+  memmove(&gapHistory[1], &gapHistory[0], sizeof(GapCell) * (GAP_FRAMES - 1));
+  memmove(&sideHistory[1], &sideHistory[0], sizeof(int) * (GAP_FRAMES - 1));
+  gapHistory[0] = best;
+  sideHistory[0] = side;
+  if (gapHistoryCount < GAP_FRAMES) {
+    gapHistoryCount++;
+  }
+}
+
+void TofView_ReportStop(void) {
+  if (gapHistoryCount < GAP_FRAMES) {
+    return;
+  }
+  // 3枚とも出ている近さだけを採る（1枚だけの値で小さくしない）。1枚でもなければ「隙間なし」とする
+  int gap = gapHistory[0].gapMm;
+  int side = sideHistory[0];
+  for (int i = 1; i < GAP_FRAMES; i++) {
+    gap = (gap == NO_GAP || gapHistory[i].gapMm == NO_GAP) ? NO_GAP : max(gap, gapHistory[i].gapMm);
+    side = (side == NO_GAP || sideHistory[i] == NO_GAP) ? NO_GAP : max(side, sideHistory[i]);
+  }
+  Log_Printf("ToF", "停止：前端の隙間 %dmm（負＝通路の中になし）／横の余裕 %dmm", gap, side);
+  TestStats_RecordStopGap(gap, side);
+  if (gap != NO_GAP && (!stopMinValid || gap < stopMin.gapMm)) {
+    stopMinValid = true;
+    stopMin = gapHistory[0];
+    stopMin.gapMm = gap;
+    stopMinFrame = frame;
+  }
+  if (side != NO_GAP && (stopSideMinMm == NO_GAP || side < stopSideMinMm)) {
+    stopSideMinMm = side;
+  }
+}
+
 // 影の「あり」「超音波のあり」の対応を数える。先に立ったほうが相手を待つ
 static void RecordShadowOnset(unsigned long nowMs) {
   shadowOnsets++;
@@ -317,6 +434,8 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   if ((movingForward || Motion_IsStill()) && TestStats_IsRecording() && !Safety_IsLifted()) {
     RecordFloor(movingForward);
   }
+
+  RecordGap(PanTrimRightDeg());
 
   CorridorScan scan;
   ScanCorridor(&scan);
@@ -470,6 +589,10 @@ void TofView_Update(unsigned long nowMs) {
   bool coasting = Motion_GetSpeed() < MOTOR_SPEED_EPSILON && fabsf(Gyro_YawRateDps()) > TOF_SETTLE_YAW_DPS;
   if (Motion_IsTurning() || !neckOk || coasting) {
     lastUnstableMs = nowMs;
+  }
+  bool neckStill = Neck_IsSteady(nowMs) && Servo_GetAngle(SERVO_TILT) == SERVO2_LEVEL_DEG;
+  if (Motion_IsTurning() || !neckStill || coasting || !Motion_IsStill()) {
+    lastMoveMs = nowMs;
   }
 
   if (!wasTofStarted) {
@@ -680,7 +803,23 @@ static void PrintMismatches(void) {
   }
 }
 
+static void PrintStoredFrame(const TofFrame &f) {
+  for (int row = 0; row < 8; row++) {
+    char line[128];
+    int used = 0;
+    for (int col = 0; col < COLS && used < (int)sizeof(line); col++) {
+      int z = row * COLS + col;
+      used += snprintf(line + used, sizeof(line) - used, " %4d:%-3u", f.distanceMm[z], (unsigned)f.status[z]);
+    }
+    Log_Raw("r%d%s", row, line);
+  }
+}
+
 void TofView_PrintMismatchFrames(void) {
+  if (stopMinValid) {
+    Log_Printf("ToF", "前端の隙間が最小の停止 %dmm の1枚 #%lu（距離mm:状態）", stopMin.gapMm, (unsigned long)stopMinFrame.seq);
+    PrintStoredFrame(stopMinFrame);
+  }
   if (mismatchTotal == 0) {
     Log_Printf("ToF", "食い違いの記録はまだありません");
     return;
@@ -692,15 +831,7 @@ void TofView_PrintMismatchFrames(void) {
     }
     Log_Printf("ToF", "%lu) %lums %s の1枚 #%lu（距離mm:状態）", (unsigned long)(i + 1), (unsigned long)m->timeMs,
                MismatchKindName(m->kind), (unsigned long)m->snapshot.seq);
-    for (int row = 0; row < 8; row++) {
-      char line[128];
-      int used = 0;
-      for (int col = 0; col < COLS && used < (int)sizeof(line); col++) {
-        int z = row * COLS + col;
-        used += snprintf(line + used, sizeof(line) - used, " %4d:%-3u", m->snapshot.distanceMm[z], (unsigned)m->snapshot.status[z]);
-      }
-      Log_Raw("r%d%s", row, line);
-    }
+    PrintStoredFrame(m->snapshot);
   }
 }
 
@@ -732,6 +863,12 @@ void TofView_Print(void) {
              (unsigned long)framesJudged, (unsigned long)framesSkipped, (unsigned long)emergencyFramesForward,
              (unsigned long)emergencyFrames, (unsigned long)tooNearZones, judgedBlocked ? "あり" : "なし");
   PrintFloor();
+  if (stopMinValid) {
+    Log_Printf("ToF", "前端の隙間の最小 %dmm（r%d c%d %dmm:%u、前後 %.0f 左右 %.0f 高さ %.0f）／横の余裕の最小 %dmm。c で 8×8 の表",
+               stopMin.gapMm, stopMin.row, stopMin.col, stopMin.distanceMm, stopMin.status, stopMin.x, stopMin.y, stopMin.z, stopSideMinMm);
+  } else {
+    Log_Printf("ToF", "前端の隙間：通路の中に3枚とも写った停止はありません／横の余裕の最小 %dmm", stopSideMinMm);
+  }
   PrintMismatches();
 }
 
