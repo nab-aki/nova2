@@ -7,6 +7,7 @@
 #include <Arduino.h>
 
 #include "../hal/hal_tof.h"
+#include "tof_look.h"
 
 // 試験の集計に残す ToF の数（起動からの累計）
 struct TofCounts {
@@ -39,6 +40,9 @@ float TofView_FloorExpectedMm(int row);
 
 // 車体と首が1枚の間ずっと止まっていた新しい1枚があれば out に渡す（首の向きは問わない）
 bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out);
+
+// いまの1枚を、車体の正面の通路で見る
+void TofView_EvaluateFront(int nearMm, TofViewResult *out);
 
 // 気づいて止まったときに呼ぶ。止まったあとの3枚で前端の隙間・横の余裕を記録する
 void TofView_ReportStop(void);

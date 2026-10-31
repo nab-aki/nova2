@@ -338,6 +338,10 @@ static void RecordGap(void) {
   }
 }
 
+void TofView_EvaluateFront(int nearMm, TofViewResult *out) {
+  TofLook_Evaluate(frame, Servo_GetAngle(SERVO_PAN), 0.0f, nearMm, out);
+}
+
 void TofView_ReportStop(void) {
   if (gapHistoryCount < GAP_FRAMES) {
     return;

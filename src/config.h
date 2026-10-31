@@ -359,6 +359,7 @@
 #define TROUBLE_TURN_STEP_MS        600     // 1回に回る時間の上限（ジャイロが使えないときの時間も兼ねる。425→600、2026-10-10：
                                             // 角度の指示を 30°→50° にしたため。50°で止める判断は 40° なので、2026-10-04 の遅い状態
                                             // （0.08°/ms×(時間−50ms)）でも届く 550ms に余裕を足した。キー 3・4 の上限、ID25 の向き変えも同じ値を使う）
+#define TROUBLE_LOOK_TURN_DEG       50      // ToF：首で見た向きへ回る角度（WANDER_SCAN_PAN_DEG と同じ向きを見て決める）
 #define TROUBLE_TURN_STEP_DEG       30      // 1回に回る角度（ジャイロの角度で止める。使えないとき・上限は TROUBLE_TURN_STEP_MS。
                                             // docs/specs/common_gyro_turn.md）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）

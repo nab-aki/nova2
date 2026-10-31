@@ -7,6 +7,7 @@
 #include "../core/obstacle.h"
 #include "../core/safety.h"
 #include "../core/test_stats.h"
+#include "../core/tof_view.h"
 #include "../core/trace.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
@@ -16,6 +17,8 @@ const char *TroubleBehavior::StateName(State state) {
     case STATE_BACK:       return "後退";
     case STATE_SCAN_LEFT:  return "左を測る";
     case STATE_SCAN_RIGHT: return "右を測る";
+    case STATE_LOOK_LEFT:  return "首で左を見る";
+    case STATE_LOOK_RIGHT: return "首で右を見る";
     case STATE_TURN:       return "回る";
     case STATE_CHECK:      return "正面を測り直す";
     default:               return "休む";
@@ -60,6 +63,24 @@ void TroubleBehavior::printLog() const {
     const SeqLog &q = logs_[(logHead_ - 1 - i + 2 * TROUBLE_LOG_COUNT) % TROUBLE_LOG_COUNT];
     const char *end = (q.end == LOG_CLEARED) ? "空いた" : (q.end == LOG_GIVEUP) ? "あきらめ"
                     : (q.end == LOG_ABORTED) ? "中断" : "進行中";
+#if TOF_ENABLE
+    if (q.scanned) {
+      Log_Printf("困る", "%d) %lums 開始：左 %s %.1fcm（有効%d）／右 %s %.1fcm（有効%d）→ %sへ。終わり：%s（回転%d回）",
+                 i + 1, q.startMs, TofLook_StateName((TofViewState)q.leftState), q.leftCm, q.leftValid,
+                 TofLook_StateName((TofViewState)q.rightState), q.rightCm, q.rightValid,
+                 q.turnLeft ? "左" : "右", end, q.steps);
+    } else {
+      Log_Printf("困る", "%d) %lums 開始：見回しの前に終わった。終わり：%s", i + 1, q.startMs, end);
+    }
+    int shownTof = (q.steps < TROUBLE_MAX_STEPS) ? q.steps : TROUBLE_MAX_STEPS;
+    for (int k = 0; k < shownTof; k++) {
+      const StepLog &t = q.step[k];
+      Log_Printf("困る", "   回転%d：%s %.1fcm（有効%d）／判定 %s／向き %+.1f°（確かめる間に %+.1f°）",
+                 k + 1, TofLook_StateName((TofViewState)t.viewState), t.closestCm, t.validCount,
+                 t.blocked ? "あり" : "なし", t.yawDeg, t.yawMovedDeg);
+    }
+    continue;
+#endif
     if (q.scanned) {
       Log_Printf("困る", "%d) %lums 開始：左 %.1fcm（有効%d/%d）／右 %.1fcm（有効%d/%d）→ %sへ。終わり：%s（回転%d回）",
                  i + 1, q.startMs, q.leftCm, q.leftValid, WANDER_SCAN_SAMPLES, q.rightCm, q.rightValid, WANDER_SCAN_SAMPLES,
@@ -155,10 +176,61 @@ void TroubleBehavior::Decide(unsigned long nowMs) {
   turnKind_ = turnLeft ? TURN_ROTATE_LEFT : TURN_ROTATE_RIGHT;
 }
 
+void TroubleBehavior::StartLook(unsigned long nowMs) {
+  look_.begin(SCAN_LEFT_DEG, (float)WANDER_SCAN_PAN_DEG, (int)(TROUBLE_CLEAR_CM * 10.0f));
+  ChangeState(STATE_LOOK_LEFT, nowMs);
+}
+
+// 首で見た左右から回る向きを決める（ToF）。空きの側 → 遠い側 → 差が小さければ前回と反対。
+// 見えていない向きは選ばない。両側とも塞がっていれば、同じ向きに回り続けて別の向きを探す
+void TroubleBehavior::DecideLook(unsigned long nowMs) {
+  (void)nowMs;
+  bool leftOk = leftView_.state == TOF_VIEW_CLEAR || leftView_.state == TOF_VIEW_FAR_CLEAR;
+  bool rightOk = rightView_.state == TOF_VIEW_CLEAR || rightView_.state == TOF_VIEW_FAR_CLEAR;
+  bool leftBlind = leftView_.state == TOF_VIEW_BLIND;
+  bool rightBlind = rightView_.state == TOF_VIEW_BLIND;
+  // 遠くて空きは、どの距離より遠いものとして比べる
+  float leftCm = leftView_.state == TOF_VIEW_FAR_CLEAR ? 1e6f : leftView_.cm;
+  float rightCm = rightView_.state == TOF_VIEW_FAR_CLEAR ? 1e6f : rightView_.cm;
+  bool turnLeft;
+  if (leftOk != rightOk) {
+    turnLeft = leftOk;
+  } else if (leftOk) {
+    turnLeft = fabsf(leftCm - rightCm) < TROUBLE_SIDE_DIFF_CM ? !lastTurnLeft_ : leftCm > rightCm;
+  } else if (steps_ > 0) {
+    turnLeft = lastTurnLeft_;
+  } else if (leftBlind != rightBlind) {
+    turnLeft = rightBlind;
+  } else if (leftBlind) {
+    turnLeft = !lastTurnLeft_;
+  } else {
+    turnLeft = leftCm > rightCm;
+  }
+  Log_Printf("困る", "左：%s %.1fcm（有効%d）／右：%s %.1fcm（有効%d）→ %sへ",
+             TofLook_StateName(leftView_.state), leftView_.cm, leftView_.valid,
+             TofLook_StateName(rightView_.state), rightView_.cm, rightView_.valid, turnLeft ? "左" : "右");
+  lastTurnLeft_ = turnLeft;
+  turnKind_ = turnLeft ? TURN_ROTATE_LEFT : TURN_ROTATE_RIGHT;
+  if (logNow_ != nullptr) {
+    logNow_->scanned = true;
+    logNow_->leftCm = leftView_.cm;
+    logNow_->rightCm = rightView_.cm;
+    logNow_->leftValid = (uint8_t)leftView_.valid;
+    logNow_->rightValid = (uint8_t)rightView_.valid;
+    logNow_->leftState = (uint8_t)leftView_.state;
+    logNow_->rightState = (uint8_t)rightView_.state;
+    logNow_->turnLeft = turnLeft;
+  }
+}
+
 void TroubleBehavior::StartTurnStep(unsigned long nowMs) {
   ChangeState(STATE_TURN, nowMs);
   // 角度を指示して回る。止めるのは motion（角度・時間の上限・回っていない。docs/specs/common_gyro_turn.md）
+#if TOF_ENABLE
+  Motion_StartTurnDeg(turnKind_, TROUBLE_LOOK_TURN_DEG, (unsigned long)TurnTuning_StepMs(turnKind_), nowMs);
+#else
   Motion_StartTurnDeg(turnKind_, TROUBLE_TURN_STEP_DEG, (unsigned long)TurnTuning_StepMs(turnKind_), nowMs);
+#endif
 }
 
 void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
@@ -199,8 +271,31 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
           Log_Printf("困る", "後退 %lums（前後の距離が測れませんでした）", (unsigned long)TROUBLE_BACK_MS);
         }
       }
+#if TOF_ENABLE
+      StartLook(nowMs);
+#else
       scan_.begin(SCAN_LEFT_DEG, SERVO2_LEVEL_DEG, WANDER_SCAN_SAMPLES, nowMs);
       ChangeState(STATE_SCAN_LEFT, nowMs);
+#endif
+      return;
+
+    case STATE_LOOK_LEFT:
+      if (!look_.update(nowMs)) {
+        return;
+      }
+      leftView_ = look_.result();
+      look_.begin(SCAN_RIGHT_DEG, -(float)WANDER_SCAN_PAN_DEG, (int)(TROUBLE_CLEAR_CM * 10.0f));
+      ChangeState(STATE_LOOK_RIGHT, nowMs);
+      return;
+
+    case STATE_LOOK_RIGHT:
+      if (!look_.update(nowMs)) {
+        return;
+      }
+      rightView_ = look_.result();
+      DecideLook(nowMs);
+      Neck_Release(NECK_OWNER_RANGE);   // 回る間は安全層が首を走行姿勢に固定する
+      StartTurnStep(nowMs);
       return;
 
     case STATE_SCAN_LEFT:
@@ -249,6 +344,61 @@ void TroubleBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (nowMs - stateStartMs_ < TROUBLE_CHECK_SETTLE_MS) {
         return;
       }
+#if TOF_ENABLE
+      // 走行姿勢で、動きが終わったあとの新しい2枚で通路が空いていることを確かめる（判定が決まるまで待つ）
+      if (!Neck_Request(NECK_OWNER_RANGE, SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, nowMs)) {
+        return;
+      }
+      if (!checkReset_) {
+        checkReset_ = true;
+        checkYawStartDeg_ = Gyro_YawDeg();
+        Obstacle_Reset();
+        return;
+      }
+      if (!Neck_IsDrivePose() || !Neck_IsSteady(nowMs) || !Obstacle_IsReady()) {
+        return;
+      }
+      {
+        TofViewResult view;
+        TofView_EvaluateFront((int)(TROUBLE_CLEAR_CM * 10.0f), &view);
+        bool blocked = Obstacle_IsBlocked();
+        if (logNow_ != nullptr && steps_ >= 1 && steps_ <= TROUBLE_MAX_STEPS) {
+          StepLog &t = logNow_->step[steps_ - 1];
+          t.closestCm = view.cm;
+          t.validCount = (uint8_t)view.valid;
+          t.viewState = (uint8_t)view.state;
+          t.blocked = blocked;
+          t.yawDeg = Gyro_YawDeg();
+          t.yawMovedDeg = t.yawDeg - checkYawStartDeg_;
+          logNow_->steps = (uint8_t)steps_;
+        }
+        // 「空いた」＝ 判定が「なし」で、見えていて近くない（測れず＝空きにしない）
+        if (!blocked && (view.state == TOF_VIEW_CLEAR || view.state == TOF_VIEW_FAR_CLEAR)) {
+          Log_Printf("困る", "正面が空いた（%s %.1fcm・有効%d、回転%d回）。うろうろに戻ります",
+                     TofLook_StateName(view.state), view.cm, view.valid, steps_);
+          if (view.state == TOF_VIEW_FAR_CLEAR) {
+            TestStats_RecordFarClear();
+          }
+          LogFinish(LOG_CLEARED);
+          TestStats_RecordTroubleCleared();
+          Neck_Release(NECK_OWNER_RANGE);
+          active_ = false;   // 優先度が0になり、調停が ID25 に戻す
+          return;
+        }
+        Log_Printf("困る", "%d回目の回転のあと 正面 %s %.1fcm（判定 %s）。見回しからやり直します",
+                   steps_, TofLook_StateName(view.state), view.cm, blocked ? "あり" : "なし");
+      }
+      if (steps_ >= TROUBLE_MAX_STEPS) {
+        Log_Printf("困る", "%d回まわっても空きません。%lums 休みます", steps_, (unsigned long)TROUBLE_GIVEUP_REST_MS);
+        LogFinish(LOG_GIVEUP);
+        TestStats_RecordTroubleGiveup();
+        Neck_Release(NECK_OWNER_RANGE);
+        ChangeState(STATE_REST, nowMs);
+        return;
+      }
+      StartLook(nowMs);
+      return;
+#endif
       if (!checkReset_) {
         checkReset_ = true;
         checkResetMs_ = nowMs;

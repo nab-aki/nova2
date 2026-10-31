@@ -7,6 +7,12 @@
 //                                              └──────────────┘
 //                              （一周してもだめ）→ [休む] → 最初へ
 //
+// TOF_ENABLE が 1 のとき（common_tof_scan.md 4章「段2 の方針」）：
+//   [少し後退] → [首を左 50° で3枚] → [首を右 50° で3枚] → [決める] → [その向きへ回る] → [走行姿勢の新しい2枚で確かめる]
+//                 ↑                                                                         ↓（まだ塞がっている）
+//                 └─────────────────────────────────────────────────────────────────────────┘
+// 見えていない向きは「空き」にしない。首が動いたかどうかで測り直しはしない（歩き出す前の確かめで見分ける）。
+//
 // v1 は立て直すことだけを扱う。首かしげと「？」の目は v2。
 #ifndef NOVA_BEHAVIORS_TROUBLE_H
 #define NOVA_BEHAVIORS_TROUBLE_H
@@ -15,6 +21,7 @@
 #include "../core/behavior.h"
 #include "../core/motion.h"
 #include "../core/scan.h"
+#include "../core/tof_look.h"
 #include "notice.h"
 
 class TroubleBehavior : public Behavior {
@@ -40,6 +47,8 @@ class TroubleBehavior : public Behavior {
     STATE_BACK,        // 少し後退する
     STATE_SCAN_LEFT,   // 左を測る
     STATE_SCAN_RIGHT,  // 右を測る
+    STATE_LOOK_LEFT,   // ToF：首を左へ向けて見る
+    STATE_LOOK_RIGHT,  // ToF：首を右へ向けて見る
     STATE_TURN,        // その場回転を1ステップ
     STATE_CHECK,       // 止めて正面を測り直す
     STATE_REST         // あきらめて休む
@@ -48,6 +57,8 @@ class TroubleBehavior : public Behavior {
   void StartSequence(unsigned long nowMs);
   void ChangeState(State next, unsigned long nowMs);
   void Decide(unsigned long nowMs);
+  void DecideLook(unsigned long nowMs);
+  void StartLook(unsigned long nowMs);
   void StartTurnStep(unsigned long nowMs);
   static const char *StateName(State state);
 
@@ -56,6 +67,9 @@ class TroubleBehavior : public Behavior {
   State state_ = STATE_BACK;
   unsigned long stateStartMs_ = 0;
   NeckScan scan_;
+  TofLooker look_;
+  TofViewResult leftView_ = {TOF_VIEW_BLIND, -1.0f, 0};
+  TofViewResult rightView_ = {TOF_VIEW_BLIND, -1.0f, 0};
 
   float backStartCm_ = -1.0f;   // 後退する前の正面の距離
   bool backStopping_ = false;   // 後退の減速に入ったか
@@ -82,6 +96,7 @@ class TroubleBehavior : public Behavior {
     uint8_t validCount;   // 有効な測距の数
     uint8_t nearCount;    // 共通部品の履歴のうち「近い」の数
     bool blocked;         // 共通部品の判定（あり＝true）
+    uint8_t viewState;    // ToF：確かめたときの見え方（TofViewState）
     float yawDeg;         // 判定したときのジャイロの向き（積算の角度）
     float yawMovedDeg;    // 測り直しの間（履歴を捨ててから判定まで）に動いた向き。0 に近ければ、止まって測れている
   };
@@ -92,6 +107,8 @@ class TroubleBehavior : public Behavior {
     float rightCm;
     uint8_t leftValid;
     uint8_t rightValid;
+    uint8_t leftState;    // ToF：左右の見え方（TofViewState）
+    uint8_t rightState;
     bool turnLeft;
     uint8_t steps;        // 回転の回数
     uint8_t end;          // LogEnd
