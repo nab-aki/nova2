@@ -31,7 +31,7 @@
 #define MONITOR_SEND_MS         200       // 送る間隔（5Hz。測距の 10Hz は変わらない）
 #define MONITOR_WIFI_PS         WIFI_PS_MIN_MODEM   // 省電力：WIFI_PS_NONE（なし）／WIFI_PS_MIN_MODEM（既定）／WIFI_PS_MAX_MODEM
 #define MONITOR_CLIENT_SLOTS    2         // 接続の枠（段3 の上限まで）
-#define MONITOR_MAX_CLIENTS     1         // いまの上限（段1＝1、段3＝2）。超えたら閉じるコード 4001 で断る
+#define MONITOR_MAX_CLIENTS     2         // いまの上限（段1＝1、段3＝2）。超えたら閉じるコード 4001 で断る
 #define MONITOR_CLOSE_FULL      4001      // ページがこのコードを見て「満員」と出す
 #define MONITOR_CLIENT_TIMEOUT_MS 5000    // ブラウザから何も来なければ閉じる（スリープしたスマホが枠を占めないように）
 #define MONITOR_RECONNECT_MS    10000     // Wi-Fi がつながらないとき、やり直す間隔
