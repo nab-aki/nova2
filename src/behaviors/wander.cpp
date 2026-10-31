@@ -231,7 +231,19 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
       if (!look_.update(nowMs)) {
         return;
       }
-      DecideLook(nowMs);
+      for (int col = 0; col < TOF_LOOK_COLUMNS; col++) {
+        lookColumns_[col] = look_.columnCm(col);
+      }
+      StuckWatch_OnColumns(lookColumns_, nowMs);   // ID26 の信号B
+      if (StuckWatch_IsDetected()) {
+        // 次のループで ID26（優先度38）に交代する。向き変えは決めない
+        pendingAvoidTurn_ = false;
+        pendingRecover_ = false;
+        pendingBlindTurn_ = false;
+        Log_Printf("うろうろ", "前の3枚が前回と同じなので、詰まり脱出に任せます");
+      } else {
+        DecideLook(nowMs);
+      }
       if (givenUp_) {
         Neck_Release(NECK_OWNER_RANGE);
         ChangeState(STATE_GIVEN_UP, nowMs);

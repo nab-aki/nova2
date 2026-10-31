@@ -81,6 +81,7 @@ class WanderBehavior : public Behavior {
   int blindTurns_ = 0;             // 見えていないが続いた回数
   bool givenUp_ = false;
   bool pauseRequest_ = false;
+  float lookColumns_[TOF_LOOK_COLUMNS] = {};   // ID26 の見張りに渡す列ごとの距離
   float frontCm_ = 0.0f;
   float leftCm_ = 0.0f;
   float rightCm_ = 0.0f;

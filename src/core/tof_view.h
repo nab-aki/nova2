@@ -74,6 +74,9 @@ void TofView_HoldFrames(unsigned long nowMs);
 // 通路の中の最も近い距離（mm）。なければ負
 int TofView_NearestMm(void);
 
+// 判定に使った枚の番号（新しい枚を判定したら増える）
+uint32_t TofView_JudgedCount(void);
+
 // 1行の要約（状態行用）
 void TofView_FormatStatus(char *buffer, size_t size, unsigned long nowMs);
 

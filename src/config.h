@@ -372,6 +372,12 @@
 // 「期待した変化」＝経過時間（信号B は巡航時間）× CRUISE_CM_PER_S。その STUCK_UNCHANGED_RATIO 倍未満なら「不変」。
 #define STUCK_UNCHANGED_RATIO       0.5f    // 信号A・信号B（正面）：変化が期待のこの割合未満なら「縮まない／不変」
 #define STUCK_PUSH_WINDOW_MS        1000    // 信号A：巡航中、この時間の正面の縮みを見る（1000ms なら約20.6cm 未満で詰まり）
+#define STUCK_PUSH_MAX_CM           150.0f  // 【仮】ToF：信号A はこれより遠い値では見ない（遠くの値は揺れが大きく、別の物に変わりやすい）
+#define STUCK_PUSH_JUMP_CM          10.0f   // 【仮】ToF：信号A で距離がこれ以上遠くなったら、別の物に変わったとして測り直す
+#define STUCK_FRONT_COL_FIRST       2       // ToF：信号B で「正面」として比べる列
+#define STUCK_FRONT_COL_LAST        5
+#define STUCK_LEFT_COL_LAST         1       // ToF：壁の側の手がかりにする左の列（c0〜）
+#define STUCK_RIGHT_COL_FIRST       6       // ToF：同じく右の列（〜c7）
 #define STUCK_PUSH_MIN_SAMPLES      3       // 信号A：窓の中の有効な測距がこれ未満なら判定しない
 #define STUCK_SCAN_SAME_CM          4.0f    // 信号B（左右）：差がこれ未満なら「同じ」（静止時のばらつきは σ0.2cm 以下）
 #define STUCK_SCAN_NEAR_CM          60.0f   // 信号B：横だけを比べたとき、少なくとも1つがこれ未満なら数える。壁の側の手がかりにも使う

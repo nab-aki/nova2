@@ -3,6 +3,8 @@
 #include "../config.h"
 #include "../hal/hal_log.h"
 #include "test_stats.h"
+#include "tof_look.h"
+#include "tof_view.h"
 
 // 信号B
 static StuckScanResult prevScan;
@@ -24,6 +26,10 @@ static bool detected = false;
 static StuckEvent detectedEvent = {STUCK_REASON_PUSH, STUCK_WALL_UNKNOWN};
 
 static const char *const DIR_NAMES[STUCK_DIR_COUNT] = {"正面", "左", "右"};
+
+// 信号B（ToF）：前回の列ごとの最も近い距離
+static float prevColumns[TOF_LOOK_COLUMNS];
+static uint32_t lastJudged = 0;   // 信号A：最後に見た枚
 
 const char *StuckWatch_ReasonName(StuckReason reason) {
   switch (reason) {
@@ -87,6 +93,64 @@ void StuckWatch_OnCruiseSample(const SensorData &sensors, unsigned long nowMs) {
   if (detected) {
     return;   // ID26 に交代するまでの1ループ
   }
+#if TOF_ENABLE
+  (void)sensors;
+  uint32_t judged = TofView_JudgedCount();
+  if (judged == lastJudged) {
+    return;
+  }
+  lastJudged = judged;
+  int mm = TofView_NearestMm();
+  float cm = mm / 10.0f;
+  if (mm < 0 || cm > STUCK_PUSH_MAX_CM) {
+    pushBaseValid = false;   // 通路に物がない、または遠い。比べない
+    return;
+  }
+  if (!pushBaseValid) {
+    pushBaseValid = true;
+    pushBaseCm = cm;
+    pushBaseMs = nowMs;
+    pushSamples = 1;
+    return;
+  }
+  pushSamples++;
+  unsigned long dtTof = nowMs - pushBaseMs;
+  float shrinkTof = pushBaseCm - cm;
+  if (shrinkTof <= -STUCK_PUSH_JUMP_CM) {
+    pushBaseCm = cm;   // 前の物が通路から外れた。別の物として測り直す
+    pushBaseMs = nowMs;
+    pushSamples = 1;
+    return;
+  }
+  if (dtTof < STUCK_PUSH_WINDOW_MS) {
+    return;
+  }
+  float expectedTof = dtTof * CRUISE_CM_PER_S / 1000.0f;
+  if (pushSamples >= STUCK_PUSH_MIN_SAMPLES && shrinkTof < expectedTof * STUCK_UNCHANGED_RATIO) {
+    float leftCm = -1.0f;
+    float rightCm = -1.0f;
+    if (hasPrev) {
+      for (int col = 0; col < TOF_LOOK_COLUMNS; col++) {
+        float value = prevColumns[col];
+        if (value < 0.0f) continue;
+        if (col <= STUCK_LEFT_COL_LAST && (leftCm < 0.0f || value < leftCm)) leftCm = value;
+        if (col >= STUCK_RIGHT_COL_FIRST && (rightCm < 0.0f || value < rightCm)) rightCm = value;
+      }
+    }
+    bool leftNear = leftCm >= 0.0f && leftCm < STUCK_SCAN_NEAR_CM;
+    bool rightNear = rightCm >= 0.0f && rightCm < STUCK_SCAN_NEAR_CM;
+    StuckWallSide wallTof = leftNear && rightNear ? (leftCm <= rightCm ? STUCK_WALL_LEFT : STUCK_WALL_RIGHT)
+                            : leftNear ? STUCK_WALL_LEFT : rightNear ? STUCK_WALL_RIGHT : STUCK_WALL_UNKNOWN;
+    Log_Printf("詰まり", "巡航中に通路の前が縮まない（%lums で %.1f→%.1fcm、期待 %.1fcm の %.0f%%未満。%d枚）。詰まりに気づいた（信号A）",
+               dtTof, pushBaseCm, cm, expectedTof, STUCK_UNCHANGED_RATIO * 100.0f, pushSamples);
+    Detect(STUCK_REASON_PUSH, wallTof);
+    return;
+  }
+  pushBaseCm = cm;
+  pushBaseMs = nowMs;
+  pushSamples = 1;
+  return;
+#endif
   if (!sensors.distanceUpdated || !sensors.distanceNeckSteady) {
     return;
   }
@@ -220,6 +284,87 @@ void StuckWatch_OnScan(const StuckScanResult &r, unsigned long nowMs) {
   shortRun = true;
   Log_Printf("詰まり", "見回しが前回と同じ %d回目（%s）。%s。あと%d回で確定。次の巡航は %dms",
              sameCount, text, StuckWatch_ReasonName(reason), need - sameCount, STUCK_SUSPECT_RUN_MS);
+}
+
+void StuckWatch_OnColumns(const float *cm, unsigned long nowMs) {
+  if (detected) {
+    return;
+  }
+  if (!hasPrev || !walked) {
+    // 比べる相手がない（やり直した直後）か、歩いていない。今回を次の相手にする
+    memcpy(prevColumns, cm, sizeof(prevColumns));
+    hasPrev = true;
+    walked = false;
+    sameCount = 0;
+    shortRun = false;
+    unchangedSinceMs = nowMs;
+    return;
+  }
+
+  int compared = 0;
+  bool allSame = true;
+  bool frontCompared = false;
+  bool sideNear = false;
+  bool sideContact = false;
+  float expectedFront = walkedMs * CRUISE_CM_PER_S / 1000.0f;
+  float leftCm = -1.0f;
+  float rightCm = -1.0f;
+  for (int col = 0; col < TOF_LOOK_COLUMNS; col++) {
+    if (cm[col] >= 0.0f && col <= STUCK_LEFT_COL_LAST && (leftCm < 0.0f || cm[col] < leftCm)) leftCm = cm[col];
+    if (cm[col] >= 0.0f && col >= STUCK_RIGHT_COL_FIRST && (rightCm < 0.0f || cm[col] < rightCm)) rightCm = cm[col];
+    if (prevColumns[col] < 0.0f || cm[col] < 0.0f) {
+      continue;   // どちらかが「測れず」の列は比べない
+    }
+    compared++;
+    float diff = fabsf(cm[col] - prevColumns[col]);
+    bool same;
+    if (col >= STUCK_FRONT_COL_FIRST && col <= STUCK_FRONT_COL_LAST) {
+      frontCompared = true;
+      same = diff < expectedFront * STUCK_UNCHANGED_RATIO;
+    } else {
+      same = diff < STUCK_SCAN_SAME_CM;
+      if (cm[col] < STUCK_SCAN_NEAR_CM) sideNear = true;
+      if (cm[col] < WANDER_SIDE_VERY_NEAR_CM) sideContact = true;
+    }
+    if (!same) {
+      allSame = false;
+    }
+  }
+  memcpy(prevColumns, cm, sizeof(prevColumns));
+  walked = false;
+
+  if (compared == 0 || (allSame && !frontCompared && !sideNear)) {
+    return;   // 比べられない、または横が遠くて見分けられない。数えは進めもやり直しもしない
+  }
+  if (!allSame) {
+    if (sameCount > 0) {
+      Log_Printf("詰まり", "前の3枚の列が変わった（比べた列 %d）。数えをやり直す", compared);
+    }
+    sameCount = 0;
+    shortRun = false;
+    unchangedSinceMs = nowMs;
+    return;
+  }
+
+  sameCount++;
+  TestStats_RecordStuckUnchangedMs(nowMs - unchangedSinceMs);
+  bool strong = frontCompared || sideContact;
+  int need = strong ? STUCK_SAME_SCANS_STRONG : STUCK_SAME_SCANS_SIDE;
+  StuckReason reason = frontCompared ? STUCK_REASON_FRONT
+                       : (sideContact ? STUCK_REASON_CONTACT : STUCK_REASON_SIDE);
+  if (sameCount >= need) {
+    bool leftNear = leftCm >= 0.0f && leftCm < STUCK_SCAN_NEAR_CM;
+    bool rightNear = rightCm >= 0.0f && rightCm < STUCK_SCAN_NEAR_CM;
+    StuckWallSide wall = leftNear && rightNear ? (leftCm <= rightCm ? STUCK_WALL_LEFT : STUCK_WALL_RIGHT)
+                         : leftNear ? STUCK_WALL_LEFT : rightNear ? STUCK_WALL_RIGHT : STUCK_WALL_UNKNOWN;
+    Log_Printf("詰まり", "詰まりに気づいた（%s。「同じ」%d回。比べた列 %d、巡航 %lums・正面の期待 %.1fcm）。壁は%s",
+               StuckWatch_ReasonName(reason), sameCount, compared, walkedMs, expectedFront, WallName(wall));
+    Detect(reason, wall);
+    return;
+  }
+  shortRun = true;
+  Log_Printf("詰まり", "前の3枚の列が前回と同じ %d回目（%s）。あと%d回で確定。次の巡航は %dms",
+             sameCount, StuckWatch_ReasonName(reason), need - sameCount, STUCK_SUSPECT_RUN_MS);
 }
 
 bool StuckWatch_WantShortRun(void) {

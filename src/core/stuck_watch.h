@@ -2,6 +2,9 @@
 // ID25 うろうろから、巡航中の測距・巡航の終わり・見回しの結果を受け取り、
 // 「前に進もうとしているのに進めていない」ことに気づく。気づいたら ID26 詰まり脱出が発動する。
 //
+// TOF_ENABLE が 1 のとき：信号A は ToF の通路の最も近い距離で、信号B は前の3枚の列ごとの最も近い距離（r0〜r4。床は比べない）で見る
+// （common_tof_scan.md 4章）。超音波の見回しの結果は使わない。
+//
 //   信号A（押しても近づかない）：巡航中、正面の有効な測距が STUCK_PUSH_WINDOW_MS の間に、
 //     期待した縮み（経過時間×CRUISE_CM_PER_S）の STUCK_UNCHANGED_RATIO 倍も縮まない。単独で確定する。
 //   信号B（見回しが変わらない）：歩いたのに、見回し（正面・左右 ±50°）が前回と「同じ」が続く。
@@ -64,6 +67,9 @@ void StuckWatch_OnWalked(unsigned long cruiseMs);
 
 // ID25 の見回しが終わったとき（信号B）
 void StuckWatch_OnScan(const StuckScanResult &result, unsigned long nowMs);
+
+// ID25 が前の3枚を見終わったとき（信号B。ToF）。cm は列ごとの最も近い距離（負＝測れず）
+void StuckWatch_OnColumns(const float *cm, unsigned long nowMs);
 
 // 次の巡航を短くしてほしいか（信号B で1回目の「同じ」が出て、確定しなかったとき）
 bool StuckWatch_WantShortRun(void);

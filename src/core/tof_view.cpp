@@ -711,6 +711,10 @@ void TofView_HoldFrames(unsigned long nowMs) {
 #endif
 }
 
+uint32_t TofView_JudgedCount(void) {
+  return framesJudged;
+}
+
 int TofView_NearestMm(void) {
   return nearestMm;
 }
