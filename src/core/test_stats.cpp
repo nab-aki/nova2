@@ -380,9 +380,10 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              r.stuckDetectFront + r.stuckDetectContact + r.stuckDetectSide,
              r.stuckDetectFront, r.stuckDetectContact, r.stuckDetectSide,
              r.stuckEscapedA, r.stuckEscapedB, r.stuckRepeat, r.stuckUnchangedMaxMs / 1000.0f);
-  Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回。%dms 超 %lu回・%dms 超 %lu回）",
+  Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回・約 %lu回/秒。%dms 超 %lu回・%dms 超 %lu回）",
              slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
-             (unsigned long)r.loopCount, LOOP_SLOW_MS, (unsigned long)r.loopSlowCount,
+             (unsigned long)r.loopCount, elapsedMs > 0 ? (unsigned long)(r.loopCount * 1000.0f / elapsedMs) : 0UL,
+             LOOP_SLOW_MS, (unsigned long)r.loopSlowCount,
              LOOP_VERY_SLOW_MS, (unsigned long)r.loopVerySlowCount);
   if (r.tofState == TOF_STATE_DISABLED) {
     Log_Printf("試験", "[%d]  ToF：なし（このビルドでは使わない）", slot);

@@ -43,6 +43,8 @@ struct TofStats {
   uint32_t readSumUs;      // 読み出しの時間の合計（平均用）
   uint32_t readMaxUs;
   uint32_t stackFree;      // タスクのスタックの残りの最小（バイト）
+  uint32_t stackFreeAtStart;  // 起動が終わった直後のスタックの残りの最小（バイト）
+  uint32_t polls;          // check_data_ready を呼んだ回数
 };
 
 // タスクを作るだけで、すぐ戻る。is_alive・init（約2.7秒）はタスクの中で行う

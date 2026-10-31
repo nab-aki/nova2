@@ -79,7 +79,10 @@ static bool StartSensor(void) {
   if (!Step("set_ranging_frequency_hz", sensor.set_ranging_frequency_hz(TOF_FREQ_HZ))) return false;
   if (!Step("start_ranging", sensor.start_ranging())) return false;
 
+  uint32_t stackFree = uxTaskGetStackHighWaterMark(NULL);
   portENTER_CRITICAL(&shareMux);
+  stats.stackFreeAtStart = stackFree;
+  stats.stackFree = stackFree;
   stats.state = TOF_STATE_RUNNING;
   portEXIT_CRITICAL(&shareMux);
   return true;
@@ -130,10 +133,13 @@ static void TofTask(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(TOF_POLL_MS));
     uint8_t ready = 0;
     uint8_t status = sensor.check_data_ready(&ready);
+    portENTER_CRITICAL(&shareMux);
+    stats.polls++;
     if (status != 0) {
-      portENTER_CRITICAL(&shareMux);
       stats.readyFail++;
-      portEXIT_CRITICAL(&shareMux);
+    }
+    portEXIT_CRITICAL(&shareMux);
+    if (status != 0) {
       continue;
     }
     if (ready) {

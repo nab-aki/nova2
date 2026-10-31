@@ -84,6 +84,7 @@
 #define TOF_POLL_MS                 5       // check_data_ready を呼ぶ間隔
 #define TOF_ALIVE_TRIES             3       // 起動時に is_alive を試す回数（書き込み直後に応答しないことがあるため）
 #define TOF_ALIVE_RETRY_MS          1000    // 試す間隔
+#define TOF_STACK_MIN_FREE          1500    // スタックの残りがこれより少なければ t と起動時に知らせる
 #define TOF_TASK_CORE               1       // コア0 は Wi-Fi が使う
 #define TOF_TASK_PRIORITY           2       // loop（1）より上。同じだと I2C の待ちのあと 1 tick 待たされる
 #define TOF_TASK_STACK              8192    // バイト。6144 では残り 332 だった（2026-10-31）。t で残りを見る

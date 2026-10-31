@@ -395,7 +395,9 @@ static void ReportStart(void) {
   Tof_GetStats(&s);
   switch (s.state) {
     case TOF_STATE_RUNNING:
-      Log_Printf("ToF", "起動：is_alive %d回目で成功、init %lums、8×8 %dHz", s.aliveTries, (unsigned long)s.initMs, TOF_FREQ_HZ);
+      Log_Printf("ToF", "起動：is_alive %d回目で成功、init %lums、8×8 %dHz、スタックの残り %lu バイト%s",
+                 s.aliveTries, (unsigned long)s.initMs, TOF_FREQ_HZ, (unsigned long)s.stackFreeAtStart,
+                 s.stackFreeAtStart < TOF_STACK_MIN_FREE ? "【少ない】" : "");
       wasTofStarted = true;
       break;
     case TOF_STATE_FAILED:
@@ -414,7 +416,8 @@ static void ReportStart(void) {
 // 前進中の超音波の「あり」を数える（影と比べるため）
 static void WatchUltrasonic(unsigned long nowMs) {
   bool usBlocked = Obstacle_IsBlocked();
-  if (usBlocked && !usBlockedBefore && Motion_GetSpeed() >= MOTOR_SPEED_EPSILON) {
+  // ToF が先に止めた回は、超音波の「あり」が速度 0 で立つので、ToF を待たせている間は速度によらず数える
+  if (usBlocked && !usBlockedBefore && (Motion_GetSpeed() >= MOTOR_SPEED_EPSILON || shadowOnsetWaiting)) {
     RecordUsOnset(nowMs);
   }
   usBlockedBefore = usBlocked;
@@ -621,11 +624,13 @@ void TofView_Print(void) {
                s.failName != NULL ? s.failName : "-", s.failStep, s.aliveTries, s.alive, s.sdaLevel, s.sclLevel);
     return;
   }
-  Log_Printf("ToF", "枚数 %lu 失敗 ready %lu／data %lu 周期 平均 %.1fms／最大 %lums 読み出し 平均 %.1fms／最大 %.1fms 途切れ %lu回（最長 %lums） スタックの残り %lu",
+  Log_Printf("ToF", "枚数 %lu 失敗 ready %lu／data %lu 周期 平均 %.1fms／最大 %lums 読み出し 平均 %.1fms／最大 %.1fms 途切れ %lu回（最長 %lums） スタックの残り %lu バイト（起動直後 %lu）%s 確認 %lu回（1枚あたり %.1f回）",
              (unsigned long)s.frames, (unsigned long)s.readyFail, (unsigned long)s.dataFail,
              s.periodCount > 0 ? (float)s.periodSumMs / s.periodCount : 0.0f, (unsigned long)s.periodMaxMs,
              s.frames > 0 ? s.readSumUs / 1000.0f / s.frames : 0.0f, s.readMaxUs / 1000.0f,
-             (unsigned long)staleEvents, (unsigned long)staleMaxMs, (unsigned long)s.stackFree);
+             (unsigned long)staleEvents, (unsigned long)staleMaxMs, (unsigned long)s.stackFree,
+             (unsigned long)s.stackFreeAtStart, s.stackFree < TOF_STACK_MIN_FREE ? "【少ない】" : "",
+             (unsigned long)s.polls, s.frames > 0 ? (float)s.polls / s.frames : 0.0f);
   Log_Printf("ToF", "影の比較（起動から・前進中）：影の「あり」%lu回（超音波も ±%dms で「あり」%lu回）／超音波の「あり」%lu回（影も %lu回）／両方の回で影が先の平均 %ldms",
              (unsigned long)shadowOnsets, TOF_US_MATCH_MS, (unsigned long)shadowOnsetsMatched,
              (unsigned long)usOnsets, (unsigned long)usOnsetsMatched,
