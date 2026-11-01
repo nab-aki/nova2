@@ -11,6 +11,11 @@
 static Smoother speedSmoother(0.0f);
 static unsigned long lastUpdateMs = 0;
 
+// 曲がり測定の差動の前進（Motion_StartArc）。回転ではなく前進として扱う
+static bool arcActive = false;
+static int arcLeftPwm = 0;
+static int arcRightPwm = 0;
+
 // 回転（その場回転・片側旋回）。直進とは同時に使わない
 static bool turning = false;
 static TurnKind turnKind = TURN_ROTATE_LEFT;
@@ -125,10 +130,12 @@ static void CancelTurn(unsigned long nowMs, const char *reason) {
 void Motion_Setup(void) {
   speedSmoother.reset(0.0f);
   turning = false;
+  arcActive = false;
   Motor_Stop();
 }
 
 void Motion_SetSpeed(float target, unsigned long rampMs, unsigned long nowMs) {
+  arcActive = false;   // 差動の前進は、直進の指示で取り消す（出力は直進に戻る）
   if (turning) {
     turnCanceledValid = true;
     turnCanceledMs = nowMs;
@@ -148,6 +155,7 @@ void Motion_Stop(unsigned long nowMs) {
 void Motion_EmergencyStop(void) {
   bool wasTurning = turning;
   turning = false;          // 回転中でも確実に止める（記録は下の1行にまとめる）
+  arcActive = false;
   speedSmoother.reset(0.0f);
   Motor_Stop();
   NoteTurnAborted();
@@ -157,7 +165,22 @@ void Motion_EmergencyStop(void) {
   Log_Printf("動き", "非常停止");
 }
 
+void Motion_StartArc(int leftPwm, int rightPwm, unsigned long nowMs) {
+  (void)nowMs;
+  arcActive = true;
+  arcLeftPwm = leftPwm;
+  arcRightPwm = rightPwm;
+  speedSmoother.reset(CRUISE_SPEED);   // 前進中として扱う（ToF の判定・安全層が見る速度）
+  Motor_DrivePwm(arcLeftPwm, arcRightPwm);
+  Log_Printf("動き", "差動の前進 左PWM%d・右PWM%d", arcLeftPwm, arcRightPwm);
+}
+
+bool Motion_IsArcing(void) {
+  return arcActive;
+}
+
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
+  arcActive = false;
   NoteTurnAborted();           // 前の回転が残っていたら中断として数え、止め方を「呼ぶ側が止める」に戻す
   speedSmoother.reset(0.0f);   // 直進の目標は捨てる
   turning = true;
@@ -314,6 +337,10 @@ void Motion_Update(unsigned long nowMs) {
   }
   lastUpdateMs = nowMs;
 
+  if (arcActive) {
+    Motor_DrivePwm(arcLeftPwm, arcRightPwm);   // 差動の前進は、なめらか化も揺らぎも通さない
+    return;
+  }
   speedSmoother.update(nowMs);
   float speed = speedSmoother.value();
   float output = speed + Wobble(nowMs, speed);

@@ -452,6 +452,24 @@
 #define GYRO_SPIN_GAP_MS            500     // n キー：前進を止めてから、その場回転を始めるまでの「ため」
 #define PRIORITY_DEBUG_GYRO_SPIN    50      // 車体：n キーの測定（デバッグ回転と同じ。同時には受け付けない）
 
+// 曲がり測定（ID27 段階1「曲がれる力を測る」。behaviors/debug_arc.*）
+// i・k・l で準備（向きと外側の値）、一時停止中にリモコンの ▶ で始める。内側の車輪は ARC_INNER_PWM、外側を ARC_OUTER_PWM_LIST の値にして前進し、ジャイロで曲がる速さを測る。
+// 測定中も ToF で止める判断と持ち上げで止める安全層は働く。やめどき：巡航に近い速さで 40°/秒【仮】以上曲がれなければ ID27 を中止（catalog.md）
+#define PRIORITY_DEBUG_ARC          50      // 車体：曲がり測定（デバッグ回転と同じ。同時には受け付けない）
+#define ARC_LEAD_MS                 300     // 直進（0 から巡航まで加速する時間）。この間は左右同じ出力
+#define ARC_RUN_MS                  1500    // 差動の前進の長さ
+#define ARC_BASELINE_RUN_MS         1500    // 直進の基準（左右とも巡航の PWM）の長さ
+#define ARC_SKIP_MS                 700     // 差動の前進の最初に、集計から外す時間（回り始め）
+#define ARC_PARTIAL_MIN_MS          400     // ToF などで途中で止まったとき、集計の時間がこれ以上なら、それまでの平均を出す
+#define ARC_STEP_MS                 100     // 曲がる速さを出す刻み
+#define ARC_INNER_PWM               MOTOR_PWM_MIN   // 内側の車輪（これより下げると動かない）
+#define ARC_OUTER_PWM_COUNT         4       // 外側の値の数（先頭の「直進の基準」は別）
+#define ARC_OUTER_PWM_LIST          {726, 800, 900, 1000}
+#define ARC_PREP_TIMEOUT_MS         3000    // 首が走行姿勢で安定し、判定が決まるまで待つ上限
+#define ARC_START_DELAY_MS          500     // ▶ を押してから動き出すまでの「ため」（首が動いていても最低これだけ待つ）
+#define ARC_RESULT_COUNT            8       // 結果を残す件数（電源を切るまで RAM。t で見る）
+#define ARC_MAX_STEPS               (ARC_RUN_MS / ARC_STEP_MS + 2)   // 0.1秒刻みの記録の最大数
+
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
 // 「1回の試験」＝再開してから一時停止するまで（起動時に一時停止でなければ起動から）。
 // 直近3回分だけ NVS（フラッシュ）に保存する。走行中は書かない。
