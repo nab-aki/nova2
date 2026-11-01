@@ -440,7 +440,7 @@ ToF のタスク（Wire1）→ 最新の1枚 → tof_view（1枚の解釈）→ 
 | TOF_HEAD_CLEAR_MM | 160【仮】 | これより高い物は無視 |
 | TOF_TOO_NEAR_MM | 50【仮】 | 状態によらず「近すぎ」 |
 | TOF_FLOOR_RATIO | 0.80【仮】 | 床の想定距離のこの割合より近ければ床ではない（段1 の走行中の谷） |
-| TOF_FLOOR_STOP_ENABLE | 0 | 床のマスで止めるか（段2 で判断） |
+| TOF_FLOOR_STOP_ENABLE | 0 | 床のマスで止めるか（ID17 と一緒に判断） |
 | TOF_BLIND_STOP_FRAMES | 2【仮】 | 通路が測れず・床も見えない枚がこれだけ続いたら止まる（500ms から変更。2026-10-31） |
 | TOF_NECK_TO_SENSOR_MM | 120 | 首の左右の回転軸から ToF の表面まで（前後。ユーザーの実測） |
 | TOF_FLOOR_RATIO_FAR | 1.50【仮】 | 床とみなす比の上限 |
