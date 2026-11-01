@@ -22,6 +22,7 @@
 #include "behaviors/debug_turn.h"
 #include "behaviors/notice.h"
 #include "behaviors/pause_cue.h"
+#include "behaviors/puzzled_eyes.h"
 #include "behaviors/stuck.h"
 #include "behaviors/stuck_eyes.h"
 #include "behaviors/trouble.h"
@@ -38,6 +39,7 @@
 #include "core/safety.h"
 #include "core/sensors.h"
 #include "core/test_stats.h"
+#include "core/tof_view.h"
 #include "core/trace.h"
 #include "core/turn_tuning.h"
 #include "hal/hal.h"
@@ -55,8 +57,19 @@ static DebugScanBehavior debugScanBehavior;
 static PauseCueBehavior pauseCueBehavior;
 static StuckBehavior stuckBehavior;
 static StuckEyesBehavior stuckEyesBehavior(&stuckBehavior);
+static PuzzledEyesBehavior puzzledEyesBehavior(&wanderBehavior);
 
 static unsigned long lastStatusMs = 0;
+
+// loop の周期を試験の集計へ渡す（スプリント3.6-3 段0。ToF のタスクの影響を見る）
+static void RecordLoop(void) {
+  static uint32_t lastUs = 0;
+  uint32_t nowUs = micros();
+  if (lastUs != 0) {
+    TestStats_RecordLoopUs(nowUs - lastUs);
+  }
+  lastUs = nowUs;
+}
 
 // センサー値と状態をまとめて1行表示する
 static void PrintStatus(unsigned long nowMs) {
@@ -98,11 +111,14 @@ static void PrintStatus(unsigned long nowMs) {
     snprintf(gyro, sizeof(gyro), "%s", Gyro_StateName());
   }
 
+  char tof[40];
+  TofView_FormatStatus(tof, sizeof(tof), nowMs);
+
   Log_Printf("状態",
-             "距離:%s 障害物:%s(近%d/%d) 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
+             "距離:%s 障害物:%s(近%d/%d) ToF:%s 接近:%s 光:%d ライン:%d%d%d(左中右) 電池:%.2fV(ADC %d) "
              "%s 首:%d/%d(%s,%s)%s%s 目:%s 車体:%s 目の振る舞い:%s 気づき停止:%d回 ジャイロ:%s",
              distance,
-             Obstacle_IsBlocked() ? "あり" : "なし", Obstacle_NearCount(), Obstacle_SampleCount(),
+             Obstacle_IsBlocked() ? "あり" : "なし", Obstacle_NearCount(), Obstacle_SampleCount(), tof,
              approach, s.lightAdc,
              s.track & 0x01, (s.track >> 1) & 0x01, (s.track >> 2) & 0x01,
              s.batteryV, s.batteryAdc,
@@ -110,6 +126,7 @@ static void PrintStatus(unsigned long nowMs) {
              Servo_GetAngle(SERVO_PAN), Servo_GetAngle(SERVO_TILT),
              Neck_OwnerName(Neck_Owner()), Neck_IsSteady(nowMs) ? "安定" : "動作中",
              Safety_IsStopping() ? " 安全:停止中" : "",
+             Safety_IsTofStopped() ? " ToF で停止中" :
              Safety_IsTrackLost() ? " ライン読めず" :
              (Safety_IsLifted() ? " 持ち上げ中" : (Pause_IsPaused() ? " 一時停止中" : "")),
              Eyes_Name(Eyes_Get()),
@@ -144,6 +161,9 @@ static void PrintKeyHelp(void) {
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
+  Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
+  Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
+  Log_Printf("キー", "b:%dms の間、ToF の1枚を届けない（途切れで止まる試験。床の上で、歩き出してから押す）", TOF_DEBUG_HOLD_MS);
   Log_Printf("キー", "回転の調整（一時停止中だけ。押すたびに値と config.h 用の #define を出します。書き込み直すと元に戻ります）：");
   Log_Printf("キー", "  q/a:1ステップの時間 ±%dms（%d〜%d）  w/s:キックの時間 ±%dms（%d〜%d、0でキックなし）",
              DEBUG_TUNE_STEP_MS_STEP, DEBUG_TUNE_STEP_MS_MIN, DEBUG_TUNE_STEP_MS_MAX,
@@ -168,8 +188,9 @@ static void RequestDebugTurn(TurnKind kind, unsigned long durationMs, int target
     return;
   }
   if (Safety_IsLifted()) {
-    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
-                                                  : "持ち上げられているので無視します");
+    Log_Printf("キー", "%s", Safety_IsTofStopped() ? "ToF が使えず止めているので無視します"
+                             : Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                    : "持ち上げられているので無視します");
     return;
   }
   if (troubleBehavior.isBusy()) {
@@ -209,8 +230,9 @@ static void RequestDebugScan(bool tiltWithFirst) {
     return;
   }
   if (Safety_IsLifted()) {
-    Log_Printf("キー", "%s", Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
-                                                  : "持ち上げられているので無視します（床に置いてから押してください）");
+    Log_Printf("キー", "%s", Safety_IsTofStopped() ? "ToF が使えず止めているので無視します"
+                             : Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので無視します"
+                                                    : "持ち上げられているので無視します（床に置いてから押してください）");
     return;
   }
   debugScanBehavior.request(tiltWithFirst);
@@ -393,7 +415,11 @@ static void HandleSerialKeys(void) {
         Gyro_Print();
         Motion_PrintTurnStats();
         troubleBehavior.printLog();
+        TofView_Print();
         break;
+      case 'y': TofView_PrintFrame(); break;
+      case 'c': TofView_PrintMismatchFrames(); break;
+      case 'b': TofView_HoldFrames(now); break;
       case 'j': Gyro_PrintNow(); break;
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
@@ -415,7 +441,7 @@ static void HandleSerialKeys(void) {
 
 void setup() {
   Log_Setup();
-  Log_Printf("起動", "Nova スプリント3.5（ID25 うろうろ・ID15 障害物で困る・ID26 詰まり脱出＋ジャイロ：測るだけ）");
+  Log_Printf("起動", "Nova スプリント3.6-3 段0（ID25 うろうろ・ID15 障害物で困る・ID26 詰まり脱出＋ジャイロ。ToF は記録だけ）");
 
   uint8_t resetCode = Reset_ReasonCode();
   Log_Printf("起動", "リセット理由：%s%s", Reset_ReasonName(resetCode),
@@ -445,6 +471,7 @@ void setup() {
   Eyes_Setup();
   Motion_Setup();
   Gyro_Setup(millis());   // 初期化は loop() の中で1段ずつ進む（WHO_AM_I の確認 → 設定 → ゼロ点補正）
+  TofView_Setup();        // ToF のタスクを作る（is_alive・init はタスクの中で進む）
 
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
@@ -457,15 +484,17 @@ void setup() {
   Arbiter_Register(&pauseCueBehavior);
   Arbiter_Register(&stuckEyesBehavior);
   Arbiter_Register(&noticeEyesBehavior);
+  Arbiter_Register(&puzzledEyesBehavior);
   Arbiter_Register(&blinkBehavior);
 
   Log_Printf("起動", "初期化完了。停止閾値%.0fcm・巡航PWM%d・見回し±%d°で、%s",
-             OBSTACLE_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG,
+             OBSTACLE_SHOWN_STOP_CM, Motor_SpeedToPwm(CRUISE_SPEED), WANDER_SCAN_PAN_DEG,
              Pause_IsPaused() ? "一時停止から始めます（p で再開）" : "うろうろを始めます");
   PrintKeyHelp();
 }
 
 void loop() {
+  RecordLoop();
   unsigned long now = millis();
 
   HandleSerialKeys();
@@ -485,8 +514,12 @@ void loop() {
   GyroMeasure_Update(now);
   Neck_Update(now);
   Obstacle_Update(Sensors_Get(), now);
+  TofView_Update(now);       // 段0：ToF の判定を記録するだけ（動きには使わない）
 
   Arbiter_Update(Sensors_Get(), now);   // 振る舞いが車体・目・首を動かす
+  if (wanderBehavior.takePauseRequest() && !Pause_IsPaused()) {
+    TogglePause("見えていない向きが1周続いた", now);
+  }
   Safety_Update(Sensors_Get(), now);    // 安全層が最後に上書きする
 
   Eyes_Update(now);

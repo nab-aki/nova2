@@ -73,6 +73,79 @@
 #define SERVO2_MIN_DEG              90      // 実測：servo2 の可動範囲（仕様上は 90〜150）
 #define SERVO2_MAX_DEG              140
 
+// ------------------------ ToF（VL53L8CX。スプリント3.6-3。docs/specs/common_tof_scan.md）------------------------ //
+// 段0：判定は記録するだけで、動きには使わない（超音波で走る）。
+#ifndef TOF_ENABLE
+#define TOF_ENABLE                  1       // 0 なら ToF のタスクを作らない（比べるための環境 fnk0053_notof）
+#endif
+#define TOF_I2C_HZ                  400000  // Wire1 の速さ（実測：線 15cm で失敗 0。measurements.md）
+#define TOF_FREQ_HZ                 10      // 測距の頻度
+#define TOF_FRAME_MS                100     // 1枚の時間（1000 ÷ TOF_FREQ_HZ）
+#define TOF_POLL_MS                 5       // check_data_ready を呼ぶ間隔
+#define TOF_ALIVE_TRIES             3       // 起動時に is_alive を試す回数（書き込み直後に応答しないことがあるため）
+#define TOF_ALIVE_RETRY_MS          1000    // 試す間隔
+#define TOF_STACK_MIN_FREE          1500    // スタックの残りがこれより少なければ t と起動時に知らせる
+#define TOF_TASK_CORE               1       // コア0 は Wi-Fi が使う
+#define TOF_TASK_PRIORITY           2       // loop（1）より上。同じだと I2C の待ちのあと 1 tick 待たされる
+#define TOF_TASK_STACK              8192    // バイト。6144 では残り 332 だった（2026-10-31）。t で残りを見る
+#define TOF_STALE_MS                250     // 【仮】最新の1枚がこれより古ければ「途切れ」（周期の実測最大 103ms の約2.5倍）。段0 は数えるだけ
+
+// 取り付け・車体の寸法（実測。measurements.md「車体の寸法」「ToF の配線」）
+#define TOF_SENSOR_HEIGHT_MM        95      // 床からセンサーまで（首が水平のとき）
+#define TOF_SENSOR_Y_MM             35      // 首の中心からセンサーまで（左へ）
+#define TOF_BODY_HALF_WIDTH_MM      75      // 車体の半分の幅（タイヤの外側どうし 150mm）
+#define TOF_FRONT_OFFSET_MM         30      // センサーの表面から車体の前端まで
+#define TOF_ZONE_DEG                5.625f  // 1マスの角度（視野 45° ÷ 8。視野はデータシートで未確認）
+
+// 通路の判定
+#define TOF_CORRIDOR_MARGIN_MM      20      // 【仮】通路の幅の余裕（片側）
+#define TOF_STOP_MM                 380     // 【仮】通路の中の停止距離（センサーから。今の超音波は 360mm）
+#define TOF_CLEAR_MARGIN_MM         100     // 「なし」に戻る余裕（超音波の OBSTACLE_CLEAR_MARGIN_CM と同じ）
+#define TOF_EMERGENCY_MM            120     // これ未満は1枚で非常停止（超音波の OBSTACLE_EMERGENCY_CM と同じ）
+#define TOF_NEAR_FRAMES             2       // 【仮】続けてこの枚数で「あり」
+#define TOF_HEAD_CLEAR_MM           160     // 【仮】これより高い物は無視（首の上端 125mm より上。テーブルの下で止まらないため）
+#define TOF_TOO_NEAR_MM             50      // 【仮】状態によらず「近すぎ」とみなす距離（状態 255 で 20〜30mm が出るため）
+#define TOF_STATUS_VALID_A          5       // 【仮】有効とみなす状態（番号の意味は ST の資料で未確認）
+#define TOF_STATUS_VALID_B          9
+#define TOF_RECOVER_FRAMES          3       // 途切れのあと、これだけ続けて届いたら戻す
+#define TOF_STOP_LOG_MS             1000    // ToF で止めている間、理由を出す間隔
+#define TOF_SETTLE_YAW_DPS          20.0f   // 【仮】止めたあとの惰性がこれより速い間は「動いている」とする（前進中は見ない）
+#define TOF_DEBUG_HOLD_MS           1000    // キー b：1枚を届けない時間（途切れで止まる試験）
+#define TOF_CENTER_TO_SENSOR_MM     120     // 車体の回転の中心から ToF の表面まで（前後。実測）
+#define TOF_NECK_TO_SENSOR_MM       120     // 首の左右の回転軸から ToF の表面まで（前後。首は正面 84°。ユーザーの実測 2026-10-31）
+#define TOF_ISOLATED_MM             60      // 【仮】隣のマスとの差がこれ以下なら孤立していない
+#define TOF_ISOLATED_RATIO          0.15f   // 【仮】同じく距離に対する割合（大きいほうを使う）
+#define TOF_VIEW_MIN_VALID          2       // 【仮】通路の中の有効なマスがこれ以上で「空き」と言える
+#define TOF_FLOOR_CHECK_ROW         6       // 床が写っているかを見る行（r6・r7）
+#define TOF_FLOOR_RATIO_FAR         1.50f   // 【仮】床とみなす比の上限（下限は TOF_FLOOR_RATIO）
+#define TOF_FLOOR_SEEN_RATIO        0.6f    // 【仮】通路に入る床のマスのうち、この割合が想定どおりなら「床が写る」
+#define TOF_LOOK_ONSET_WINDOW_MS    150     // 首への指示のあと、動き出しを見る時間
+#define TOF_LOOK_ONSET_DPS          2.0f    // 【仮】この時間に超えなければ「動かなかった疑い」と数える（記録だけ）
+#define TOF_SAME_PLACE_FORWARD_MS   1000    // 【仮】困るの間の前進の合計がこれ未満なら「同じ場所」とみなす
+#define TOF_SAME_PLACE_COUNT        3       // 「同じ場所」で困るがこの回数続いたら数える
+#define TOF_BLIND_STOP_FRAMES       2       // 【仮】前進中、通路の上の段が測れず床も写らない枚がこれだけ続いたら止まる（黒い物の疑い）
+#define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
+#define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
+#define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
+
+// 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
+#define TOF_FLOOR_RATIO             0.80f   // 【仮】床の想定距離のこの割合より近ければ床ではない（走行中の r6・r7 の谷。段1 の記録）
+#define TOF_FLOOR_RATIO_MIN         0.50f   // 分布の下の端
+#define TOF_FLOOR_RATIO_STEP        0.05f   // 分布の刻み
+#define TOF_FLOOR_RATIO_BINS        16      // 0.50〜1.30。外は端に入れる
+
+// 走行姿勢（首を右へずらして、左右の通路の縁が見え始める距離をそろえる。段1 から使う）
+#define NECK_DRIVE_TRIM_RIGHT_DEG   8       // 【仮】実測の寸法でそろう角度は 7.5°（common_tof_scan.md 3.6）
+#if TOF_ENABLE
+#define SERVO1_DRIVE_DEG            (SERVO1_FRONT_DEG - SERVO1_LEFT_SIGN * NECK_DRIVE_TRIM_RIGHT_DEG)   // 76°
+#else
+#define SERVO1_DRIVE_DEG            SERVO1_FRONT_DEG   // fnk0053_notof は今までどおり正面
+#endif
+
+// loop の周期の記録（段0 で ToF のタスクの影響を見る）
+#define LOOP_SLOW_MS                20      // これより長い loop を「遅い」として数える
+#define LOOP_VERY_SLOW_MS           50      // 同じく「とても遅い」
+
 // ------------------------ 超音波 ------------------------ //
 // 測距の間隔は、実測（60ms間隔×20回で全距離・全対象とも有効20/20）に合わせて 60ms にしている。
 // 障害物の判定が「直近5回のうち3回」なので、間隔が短いほど検知が早い（100ms→300ms、60ms→180ms）。
@@ -147,6 +220,11 @@
 #define OBSTACLE_STOP_CM            36.0f   // 停止閾値
 #define OBSTACLE_CLEAR_MARGIN_CM    10.0f   // ヒステリシス：36+10=46cm 以上に戻ったら「なくなった」
 #define OBSTACLE_EMERGENCY_CM       12.0f   // 1回でもこれ未満なら多数決を待たず即停止
+#if TOF_ENABLE
+#define OBSTACLE_SHOWN_STOP_CM      (TOF_STOP_MM / 10.0f)   // ログに出す停止閾値
+#else
+#define OBSTACLE_SHOWN_STOP_CM      OBSTACLE_STOP_CM
+#endif
 #define OBSTACLE_SPEED_MIN_MS       150     // 接近速度を求めるのに必要な最小の時間差
 
 // ------------------------ 巡航 ------------------------ //
@@ -205,6 +283,7 @@
 #define DEBUG_TUNE_PWM_STEP         50
 #define PRIORITY_IDLE_BLINK         10      // 目：何もなければまばたきする
 #define PRIORITY_NOTICE_EYES        30      // 目：ID9 気づいて見開く（まばたきより優先）
+#define PRIORITY_PUZZLED_EYES       36      // 目：ID25 が回るのをやめて一時停止している間の「？」
 #define PRIORITY_STUCK_EYES         35      // 目：ID26 の「？」（気づいてから後退を始めるまで）
 #define PRIORITY_PAUSE_CUE          40      // 目：一時停止・再開の合図（リモコンの ▶ や p キー）
 
@@ -237,6 +316,13 @@
 // 正面の停止閾値 OBSTACLE_STOP_CM（36cm）より内側の 25cm を「とても近い」とし、
 // このときは片側旋回ではなく、後退してその場回転（安全層に止められない）で避ける。
 // WANDER_SIDE_NEAR_CM（40cm）との間に余裕を持たせてある。実機で見回しのログ（横の距離）を見ながら詰める。
+#define WANDER_WALK_MIN_MM          550     // 【仮】ToF：通路がこれだけ空いていれば歩く（common_tof_scan.md 4章）
+#define WANDER_BLIND_TURN_DEG       30      // ToF：正面が見えていないとき、歩かずに回って見直す角度
+#define WANDER_BLIND_GIVEUP_TURNS   12      // ToF：見えていないが続けてこの回数（1周）続いたら、回るのをやめて一時停止する
+#define WANDER_SIDE_LEFT_COL_FIRST  0       // ToF：向き変えで比べる列。走行姿勢で車体の正面からほぼ同じ角度になる左 c0〜c1 と右 c3〜c4
+#define WANDER_SIDE_LEFT_COL_LAST   1
+#define WANDER_SIDE_RIGHT_COL_FIRST 3
+#define WANDER_SIDE_RIGHT_COL_LAST  4
 #define WANDER_SIDE_VERY_NEAR_CM    25.0f   // 横がこれより近ければ、片側旋回でなく後退+その場回転で避ける（確定 2026-10-05）
 // 【2026-09-22 に仮置き、2026-10-05 に確定】満充電でも、後退の直後にその場回転を始めるとブラウンアウトが起きた
 // （その場回転のキックを1000→300msにしても再発。decisions.md）。なめらか加減速の出力が0になっても
@@ -259,8 +345,11 @@
 // 片側だけ測れなかったとき（浅い角度の壁はエコーが返らない）、測れた側がこれ以上なら測れた側へ、
 // これ未満なら測れなかった側へ回る（測れなかった側を「遠い」とはみなさない。2026-09-24）
 #define TROUBLE_KNOWN_FAR_CM        50.0f
-#define TROUBLE_CLEAR_CM            46.0f   // 正面が「空いた」と認める距離。
-                                            // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
+#if TOF_ENABLE
+#define TROUBLE_CLEAR_CM            48.0f   // 正面が「空いた」と認める距離。TOF_STOP_MM + TOF_CLEAR_MARGIN_MM と同じ値にしてある
+#else
+#define TROUBLE_CLEAR_CM            46.0f   // OBSTACLE_STOP_CM + OBSTACLE_CLEAR_MARGIN_CM と同じ値にしてある
+#endif
                                             // （ずらすと ID25 に戻れなくなる。docs/specs/15_trouble.md）
 // 【2026-10-04 変更】700→200ms（暫定）→425ms（確定）。PWM2000・キックなし・粗面化後のタイヤで測り直した：
 // 200ms で 12°（30回で一周）、500ms で 36°（10回で一周）。回る角度 ≒ 0.08°/ms × (時間 − 50ms)。
@@ -270,6 +359,7 @@
 #define TROUBLE_TURN_STEP_MS        600     // 1回に回る時間の上限（ジャイロが使えないときの時間も兼ねる。425→600、2026-10-10：
                                             // 角度の指示を 30°→50° にしたため。50°で止める判断は 40° なので、2026-10-04 の遅い状態
                                             // （0.08°/ms×(時間−50ms)）でも届く 550ms に余裕を足した。キー 3・4 の上限、ID25 の向き変えも同じ値を使う）
+#define TROUBLE_LOOK_TURN_DEG       50      // ToF：首で見た向きへ回る角度（WANDER_SCAN_PAN_DEG と同じ向きを見て決める）
 #define TROUBLE_TURN_STEP_DEG       30      // 1回に回る角度（ジャイロの角度で止める。使えないとき・上限は TROUBLE_TURN_STEP_MS。
                                             // docs/specs/common_gyro_turn.md）
 #define TROUBLE_CHECK_SETTLE_MS     200     // 回転を止めてから測り直すまでの待ち（車体の揺れが収まるまで）
@@ -282,6 +372,12 @@
 // 「期待した変化」＝経過時間（信号B は巡航時間）× CRUISE_CM_PER_S。その STUCK_UNCHANGED_RATIO 倍未満なら「不変」。
 #define STUCK_UNCHANGED_RATIO       0.5f    // 信号A・信号B（正面）：変化が期待のこの割合未満なら「縮まない／不変」
 #define STUCK_PUSH_WINDOW_MS        1000    // 信号A：巡航中、この時間の正面の縮みを見る（1000ms なら約20.6cm 未満で詰まり）
+#define STUCK_PUSH_MAX_CM           150.0f  // 【仮】ToF：信号A はこれより遠い値では見ない（遠くの値は揺れが大きく、別の物に変わりやすい）
+#define STUCK_PUSH_JUMP_CM          10.0f   // 【仮】ToF：信号A で距離がこれ以上遠くなったら、別の物に変わったとして測り直す
+#define STUCK_FRONT_COL_FIRST       2       // ToF：信号B で「正面」として比べる列
+#define STUCK_FRONT_COL_LAST        5
+#define STUCK_LEFT_COL_LAST         1       // ToF：壁の側の手がかりにする左の列（c0〜）
+#define STUCK_RIGHT_COL_FIRST       6       // ToF：同じく右の列（〜c7）
 #define STUCK_PUSH_MIN_SAMPLES      3       // 信号A：窓の中の有効な測距がこれ未満なら判定しない
 #define STUCK_SCAN_SAME_CM          4.0f    // 信号B（左右）：差がこれ未満なら「同じ」（静止時のばらつきは σ0.2cm 以下）
 #define STUCK_SCAN_NEAR_CM          60.0f   // 信号B：横だけを比べたとき、少なくとも1つがこれ未満なら数える。壁の側の手がかりにも使う

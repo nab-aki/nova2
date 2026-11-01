@@ -35,8 +35,12 @@ void Safety_SetSpinTestActive(bool active);
 
 // 持ち上げられているか。振る舞いはこの間、状態を進めない。
 // 床に戻ったら、続きからではなく最初からやり直す（docs/specs/25_wander.md）。
-// ライントラッキングが読めない状態（Safety_IsTrackLost）のときも true を返す（止め方・戻り方を同じにするため）
+// ライントラッキングが読めない状態（Safety_IsTrackLost）と、ToF で止めている状態（Safety_IsTofStopped）のときも
+// true を返す（止め方・戻り方を同じにするため）
 bool Safety_IsLifted(void);
+
+// ToF が使えない（起動中・起動に失敗・データの途切れ）ので止めている状態か
+bool Safety_IsTofStopped(void);
 
 // ライントラッキング（PCF8574）が SAFETY_TRACK_FAIL_COUNT 回続けて読めず、止めている状態か
 bool Safety_IsTrackLost(void);

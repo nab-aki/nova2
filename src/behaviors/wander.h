@@ -2,6 +2,9 @@
 // 止まって首で見回し、空いていそうな向きへ歩き、また止まる、を繰り返す。
 // 車体レイヤーの既定の振る舞い（優先度がいちばん低い）。
 //
+// TOF_ENABLE が 1 のとき：[ため] → [前の3枚（首は走行姿勢のまま）] → [決める] → …（首の見回しはしない。
+// 見えていなければ歩かず 30° 回って見直す。1周続いたら「？」の目で一時停止する。common_tof_scan.md 4章）
+// TOF_ENABLE が 0 のとき：
 //   [ため] → [正面] → [左] → [右] → [決める] →（横がとても近ければ後退+その場回転／近ければその場回転で向き変え）
 //        → [正面へ戻して安定を待つ] → [加速] → [巡航（ランダム）] → [減速] → [ため]
 //
@@ -26,6 +29,7 @@
 #include "../core/behavior.h"
 #include "../core/motion.h"
 #include "../core/scan.h"
+#include "../core/tof_look.h"
 
 class WanderBehavior : public Behavior {
  public:
@@ -36,12 +40,21 @@ class WanderBehavior : public Behavior {
   void onUpdate(const SensorData &sensors, unsigned long nowMs) override;
   void onStop(unsigned long nowMs) override;
 
+  // 見えていない向きが1周続いて、回るのをやめているか（「？」の目）
+  bool isGivenUp() const { return givenUp_; }
+
+  // 回るのをやめたので一時停止してほしいか（1回だけ true を返す。main.cpp が一時停止にする）
+  bool takePauseRequest();
+
  private:
   enum State {
     STATE_SETTLE,        // 止まってからの「ため」
     STATE_SCAN_FRONT,    // 正面を測る
     STATE_SCAN_LEFT,     // 左を測る
     STATE_SCAN_RIGHT,    // 右を測る
+    STATE_LOOK,          // ToF：前の3枚を見る
+    STATE_BLIND_TURN,    // ToF：見えていないので、歩かずに回って見直す
+    STATE_GIVEN_UP,      // ToF：見えていない向きが1周続いた。一時停止を待つ
     STATE_FACE_FRONT,    // 首を正面へ戻す
     STATE_AVOID,         // 横が近いのでその場回転で向きを変える（片側旋回は今は使わない）
     STATE_RECOVER_BACK,  // 横がとても近いので、少し後退する（張りつき対策）
@@ -56,11 +69,19 @@ class WanderBehavior : public Behavior {
   void Restart(unsigned long nowMs);
   void ChangeState(State next, unsigned long nowMs);
   void Decide(unsigned long nowMs);
+  void DecideLook(unsigned long nowMs);
   static const char *StateName(State state);
 
   State state_ = STATE_SETTLE;
   unsigned long stateStartMs_ = 0;
   NeckScan scan_;
+  TofLooker look_;
+  bool pendingBlindTurn_ = false;  // 見えていないので、歩かずに回って見直すか
+  TurnKind blindTurnKind_ = TURN_ROTATE_LEFT;
+  int blindTurns_ = 0;             // 見えていないが続いた回数
+  bool givenUp_ = false;
+  bool pauseRequest_ = false;
+  float lookColumns_[TOF_LOOK_COLUMNS] = {};   // ID26 の見張りに渡す列ごとの距離
   float frontCm_ = 0.0f;
   float leftCm_ = 0.0f;
   float rightCm_ = 0.0f;

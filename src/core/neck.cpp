@@ -89,6 +89,11 @@ bool Neck_IsSteady(unsigned long nowMs) {
   return (long)(nowMs - steadyAtMs) >= 0;
 }
 
+bool Neck_IsDrivePose(void) {
+  return Servo_GetAngle(SERVO_PAN) == SERVO1_DRIVE_DEG &&
+         Servo_GetAngle(SERVO_TILT) == SERVO2_LEVEL_DEG;
+}
+
 bool Neck_IsFront(void) {
   return Servo_GetAngle(SERVO_PAN) == SERVO1_FRONT_DEG &&
          Servo_GetAngle(SERVO_TILT) == SERVO2_LEVEL_DEG;

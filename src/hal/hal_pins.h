@@ -38,6 +38,11 @@
 // モジュールの J3 を短絡して SA0＝GND にしたので 0x6A（J2 側なら 0x6B。docs/specs/common_gyro_checklist.md）
 #define I2C_ADDR_GYRO        0x6A
 
+// ToF（VL53L8CX。Pololu #3419。キットにはない追加の部品）。第2バス（Wire1）で、hal_tof のタスクだけが使う
+// カメラの SIOD・SIOC だったピン。ESP32 基板のヘッダー P3-10・P3-11（docs/specs/common_tof_checklist.md）
+#define PIN_TOF_SDA          26
+#define PIN_TOF_SCL          27
+
 // 超音波（PCA9685を経由せずGPIOに直結）
 #define PIN_SONIC_TRIG       12
 #define PIN_SONIC_ECHO       15

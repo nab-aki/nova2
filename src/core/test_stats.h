@@ -3,7 +3,7 @@
 // ID9「気づく」・ID15「障害物で困る」・ID25「うろうろ」・安全層（持ち上げ）から
 // 集計イベントを受け取り、直近3回分を NVS（フラッシュ）に保存する。
 //
-// 保存のタイミングは3つ（走行中はフラッシュに書かない）：
+// 保存のタイミングは3つ（走行中はフラッシュに書かない。保存中は CPU が止まり、ToF の読み出しも止まるため）：
 //   ・一時停止したとき（ただし、なめらかに減速して車体が止まってから）
 //   ・シリアルの保存キー（h）
 //   ・車体が止まっているときの30秒ごと
@@ -28,6 +28,9 @@ void TestStats_Update(unsigned long nowMs);
 // paused=true：試験を終える（保存は、止まってから TestStats_Update が行う）
 // paused=false：新しい試験を始める
 void TestStats_OnPauseToggle(bool paused, unsigned long nowMs);
+
+// 試験の最中か（再開してから一時停止するまでの間）
+bool TestStats_IsRecording(void);
 
 // ------------------------ 集計イベントの記録 ------------------------ //
 // 記録中（再開してから一時停止するまでの間）でなければ、呼んでも何もしない。
@@ -57,6 +60,20 @@ void TestStats_RecordRecoverPerformed(void);
 
 // ID25：後退+その場回転が途中で交代された（優先度を上げてあるので、通常は一時停止のときだけ）
 void TestStats_RecordRecoverInterrupted(void);
+
+// ID25：歩き出した（加速を始めた。途中で止められた回も1回）
+void TestStats_RecordWalk(void);
+
+// loop の周期（µs）。毎 loop 呼ぶ（スプリント3.6-3 段0。ToF のタスクの影響を見る）
+void TestStats_RecordLoopUs(uint32_t us);
+
+// 段2（common_tof_scan.md 9章）
+void TestStats_RecordFarClear(void);        // 上の段は測れず床が写るので「遠くて空き」とした
+void TestStats_RecordBlindNoWalk(void);     // 見えていないので歩かなかった
+void TestStats_RecordBlindGiveup(void);     // 見えていない向きが続いて、回るのをやめた
+void TestStats_RecordBlindStop(void);       // 前進中に見えていない状態が続いて止まった
+void TestStats_RecordNeckLook(bool onsetSeen);   // 首を振って見た。onsetSeen が false なら「動かなかった疑い」
+void TestStats_RecordStopGap(int gapMm, int sideMm);   // 止まったあとの前端の隙間と横の余裕。なければ負
 
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);

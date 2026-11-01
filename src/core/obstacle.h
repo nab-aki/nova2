@@ -1,4 +1,6 @@
 // 障害物の判定（共通部品。docs/specs/common_obstacle.md）
+// TOF_ENABLE が 1 のとき、止まる判断（IsBlocked・IsEmergency・IsReady・LastCm）は ToF で行う（core/tof_view.*。common_tof_scan.md）。
+// 下の超音波の判定は、食い違いの記録と ID15 の測り直しのために残す。TOF_ENABLE が 0 なら超音波で判断する。
 // 測距値は1回きりでは信用せず、直近 OBSTACLE_HISTORY 回のうち OBSTACLE_NEAR_COUNT 回以上が
 // 閾値未満なら「障害物あり」とする。いちど「あり」になったら、閾値＋余裕まで戻るまで「あり」のまま
 // （ヒステリシス。壁ぎわで進む・止まるを繰り返さないため）。
@@ -22,6 +24,9 @@ void Obstacle_Reset(void);
 bool Obstacle_IsBlocked(void);     // 障害物あり（ヒステリシス込み）
 bool Obstacle_IsEmergency(void);   // 1回の測距で即停止すべきほど近い
 bool Obstacle_IsReady(void);       // 履歴がたまっていて、判定を信用してよいか
+
+bool Obstacle_UsIsBlocked(void);   // 超音波の判定（ToF と比べるため）
+bool Obstacle_UsIsReady(void);     // 超音波の履歴がたまっているか
 
 int Obstacle_NearCount(void);      // 履歴のうち「近い」の数
 int Obstacle_SampleCount(void);    // 履歴にたまっている数

@@ -6,6 +6,7 @@
 #include "neck.h"
 #include "obstacle.h"
 #include "test_stats.h"
+#include "tof_view.h"
 
 static bool stopping = false;
 static bool debugTurnActive = false;   // デバッグ回転の1ステップの間は、障害物「あり」では止めない
@@ -18,6 +19,10 @@ static bool trackLost = false;
 static int trackFailCount = 0;       // 続けて読めなかった回数
 static int trackOkCount = 0;         // 読めない状態になってから、続けて読めた回数
 static uint32_t trackLostTotal = 0;  // 読めない状態になった回数（起動から。t で表示）
+
+// ToF が使えないので止めている状態
+static bool tofStopped = false;
+static unsigned long tofStopLogMs = 0;
 
 void Safety_Setup(void) {
   stopping = false;
@@ -104,10 +109,10 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
   WatchTrackRead(sensors);
   WatchLift(sensors);
 
-  // 1. 車体が動いている間は首を正面・水平に固定する。止まったら使用権を返す
+  // 1. 車体が動いている間は首を走行姿勢・水平に固定する。止まったら使用権を返す
   //    （停止中は測距・表情が首を使える）
   if (BodyIsMoving()) {
-    Neck_Request(NECK_OWNER_SAFETY, SERVO1_FRONT_DEG, SERVO2_LEVEL_DEG, nowMs);
+    Neck_Request(NECK_OWNER_SAFETY, SERVO1_DRIVE_DEG, SERVO2_LEVEL_DEG, nowMs);
   } else if (Neck_Owner() == NECK_OWNER_SAFETY) {
     Neck_Release(NECK_OWNER_SAFETY);
   }
@@ -123,7 +128,26 @@ void Safety_Update(const SensorData &sensors, unsigned long nowMs) {
     return;
   }
 
-  // 3. 障害物があれば、近づく向きの動き（前進・片側旋回）だけを即停止する。
+  // 3. ToF が使えなければ、向きに関わらずすべての動きを止める。戻ったら振る舞いは最初からやり直す。
+  //    見張るのはタスクではなく loop の安全層（タスクが固まっても止まるように）
+  if (!TofView_CanDrive()) {
+    if (!tofStopped || nowMs - tofStopLogMs >= TOF_STOP_LOG_MS) {
+      Log_Printf("安全", "%s。止めています", TofView_StopReason());
+      tofStopLogMs = nowMs;
+    }
+    tofStopped = true;
+    if (BodyIsMoving()) {
+      Motion_EmergencyStop();
+    }
+    stopping = true;
+    return;
+  }
+  if (tofStopped) {
+    tofStopped = false;
+    Log_Printf("安全", "ToF が使えるようになりました。振る舞いは最初からやり直します");
+  }
+
+  // 4. 障害物があれば、近づく向きの動き（前進・片側旋回）だけを即停止する。
   //    デバッグ回転の1ステップの間と n キーの測定の間は、「あり」の判定では止めない（非常停止距離未満では止める）
   bool danger = Obstacle_IsBlocked() || Obstacle_IsEmergency();
   bool ignoreBlocked = debugTurnActive || spinTestActive;
@@ -153,7 +177,11 @@ bool Safety_IsStopping(void) {
 }
 
 bool Safety_IsLifted(void) {
-  return lifted || trackLost;
+  return lifted || trackLost || tofStopped;
+}
+
+bool Safety_IsTofStopped(void) {
+  return tofStopped;
 }
 
 bool Safety_IsTrackLost(void) {
