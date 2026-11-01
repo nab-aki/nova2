@@ -1,6 +1,6 @@
 // デバッグ：曲がり測定（ID27 段階1「曲がれる力を測る」。#27）
 // 内側の車輪を ARC_INNER_PWM、外側を選んだ値にして前進し、ジャイロで曲がる速さ（°/秒）を測る。
-// 巡航に近い速さで 40°/秒【仮】以上曲がれなければ、ID27 を中止する（catalog.md「ID27 のメモ」）。
+// 合否の線はまだ決めていない（40°/秒などは【仮】の参考値。根拠は未確認。catalog.md「ID27 のメモ」）。
 //
 // 使い方（ケーブルなし。ケーブルが引っぱられると測定に混ざる）：
 //   ・一時停止中（p）に、i＝左へ曲がる・k＝右へ曲がる・l＝外側の値を次へ、で準備する（シリアルに今の設定を出す）。
@@ -8,7 +8,8 @@
 //   ・測定中は、どのキーかリモコンの ▶ で中断できる。
 //   ・結果は直近 ARC_RESULT_COUNT 回を RAM に残す（電源を切る・リセットで消える）。ケーブルをつないでから t で見る。
 //
-// 1回の流れ：首を走行姿勢にして待つ → 前が空いているか確かめる → 直進（ARC_LEAD_MS）→ 差動の前進（ARC_RUN_MS）→ 減速して停止。
+// 1回の流れ：首を走行姿勢にして待つ → 前が空いているか確かめる → 直進（ARC_LEAD_MS。加速 ARC_LEAD_ACCEL_MS）→ 差動の前進（ARC_RUN_MS）→ 減速して停止。
+// 結果：平均の曲がる速さ・0.1秒ごと・差動の前進の 0.3/0.5/1.0 秒の時点の角度・前に進む速さ（ToF 中央の列の距離の減り方。壁は先 1.5m 以上）。
 // 安全：ToF で止める判断と、持ち上げで止める安全層は働いたまま（外さない）。止まった回は「途中で止まった」と出す。
 #ifndef NOVA_BEHAVIORS_DEBUG_ARC_H
 #define NOVA_BEHAVIORS_DEBUG_ARC_H
@@ -51,6 +52,7 @@ class DebugArcBehavior : public Behavior {
   void startArc(unsigned long nowMs);
   void finishRecord(End end, const SensorData &sensors, unsigned long nowMs);
   void finish(const char *reason);
+  void sampleSpeed();
 
   bool prepared_ = false;
   bool requested_ = false;
@@ -74,6 +76,15 @@ class DebugArcBehavior : public Behavior {
   int stepCount_ = 0;
   unsigned long lastActiveMs_ = 0;   // 差動の前進がまだ続いていた最後の loop
   float lastActiveYaw_ = 0.0f;
+
+  // 前に進む速さ：ToF 中央の列の距離が、1枚前から縮んだ分 ÷ 時間。時刻は2枚の読み終えた時刻の真ん中
+  uint32_t speedSeq_ = 0;
+  bool speedPrevValid_ = false;
+  uint32_t speedPrevMs_ = 0;
+  int speedPrevMm_ = 0;
+  int speedCount_ = 0;
+  unsigned long speedMs_[ARC_SPEED_MAX];
+  int16_t speedMmS_[ARC_SPEED_MAX];
 };
 
 #endif // NOVA_BEHAVIORS_DEBUG_ARC_H

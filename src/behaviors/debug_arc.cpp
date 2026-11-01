@@ -26,6 +26,12 @@ struct ArcRecord {
   uint16_t runMs;        // 差動の前進が続いた時間
   float batteryStartV;
   float batteryEndV;
+  float angle[ARC_ANGLE_COUNT];   // 差動の前進の始めから ARC_ANGLE_LIST_MS の時点までに向きを変えた角度（曲がる向きが正）
+  uint8_t angleValid;    // angle のうち、その時点まで走っていたものの印（ビット）
+  uint8_t speedCount;
+  int16_t speedAtMs[ARC_SPEED_MAX];     // 差動の前進の始まりからの時刻（負＝直進の間）
+  int16_t speedMmS[ARC_SPEED_MAX];      // 前に進む速さ（mm/秒）。INT16_MIN＝測れず
+  int16_t startSpeedMmS;                // 差動の前進を始めた時点の速さ。INT16_MIN＝なし
   uint8_t rateCount;     // 下の 0.1 秒刻みの数
   uint8_t skipSteps;     // そのうち、集計から外した最初の刻みの数
   float rates[ARC_MAX_STEPS];
@@ -37,6 +43,8 @@ static uint32_t recordTotal = 0;   // 起動からの通し番号
 static int recordHead = 0;         // 次に書く場所
 
 static const int OUTER_PWMS[ARC_OUTER_PWM_COUNT] = ARC_OUTER_PWM_LIST;
+static const int ANGLE_AT_MS[ARC_ANGLE_COUNT] = ARC_ANGLE_LIST_MS;
+#define SPEED_NONE INT16_MIN
 
 static const char *EndName(uint8_t end) {
   switch (end) {
@@ -71,6 +79,46 @@ static void PrintRecord(const ArcRecord &r, uint32_t number) {
     n += snprintf(line + n, sizeof(line) - n, "%.0f ", r.rates[k]);
   }
   Log_Printf("測定", "  0.1秒ごと（°/秒。曲がる向きが正。| の左は集計外）：%s", line);
+
+  // 差動の前進の始めから 0.3/0.5/1.0 秒の時点で、何度向きを変えたか
+  char angles[100];
+  int a = 0;
+  angles[0] = '\0';
+  for (int i = 0; i < ARC_ANGLE_COUNT && a < (int)sizeof(angles) - 24; i++) {
+    if (r.angleValid & (1 << i)) {
+      a += snprintf(angles + a, sizeof(angles) - a, "%.1f秒 %.1f°　", ANGLE_AT_MS[i] / 1000.0f, r.angle[i]);
+    } else {
+      a += snprintf(angles + a, sizeof(angles) - a, "%.1f秒 なし　", ANGLE_AT_MS[i] / 1000.0f);
+    }
+  }
+  Log_Printf("測定", "  差動の前進の始めから向きを変えた角度（曲がる向きが正）：%s", angles);
+
+  // 前に進む速さ（ToF 中央の列 c3〜c4 の距離の減り方。| から右が差動の前進）
+  char speeds[300];
+  int sp = 0;
+  speeds[0] = '\0';
+  bool bar = false;
+  for (int k = 0; k < r.speedCount && sp < (int)sizeof(speeds) - 20; k++) {
+    if (!bar && r.speedAtMs[k] >= 0) {
+      sp += snprintf(speeds + sp, sizeof(speeds) - sp, "| ");
+      bar = true;
+    }
+    if (r.speedMmS[k] == SPEED_NONE) {
+      sp += snprintf(speeds + sp, sizeof(speeds) - sp, "%+.1f:- ", r.speedAtMs[k] / 1000.0f);
+    } else {
+      sp += snprintf(speeds + sp, sizeof(speeds) - sp, "%+.1f:%d ", r.speedAtMs[k] / 1000.0f, r.speedMmS[k]);
+    }
+  }
+  if (r.speedCount == 0) {
+    Log_Printf("測定", "  前に進む速さ：記録なし（ToF の中央の列が測れていない）");
+  } else {
+    Log_Printf("測定", "  前に進む速さ（mm/秒。秒:速さ。秒は差動の前進の始まりから。| から右が差動の前進）：%s", speeds);
+  }
+  if (r.startSpeedMmS == SPEED_NONE) {
+    Log_Printf("測定", "  差動の前進を始めた時点の速さ：測れず");
+  } else {
+    Log_Printf("測定", "  差動の前進を始めた時点の速さ：%d mm/秒", r.startSpeedMmS);
+  }
 }
 
 int DebugArcBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
@@ -92,7 +140,7 @@ void DebugArcBehavior::printSetting(const char *prefix) const {
                dir_ > 0 ? ARC_INNER_PWM : outer, dir_ > 0 ? outer : ARC_INNER_PWM,
                OUTER_PWMS[0], OUTER_PWMS[1], OUTER_PWMS[2], OUTER_PWMS[3]);
   }
-  Log_Printf("測定", "  差動の前進 %.1f秒（直進 %.1f秒のあと）。準備ができました。ケーブルを抜き、前 1.5m 以上・曲がる向きと反対側の壁から 15〜20cm にして、リモコンの ▶ で始めます",
+  Log_Printf("測定", "  差動の前進 %.1f秒（直進 %.1f秒のあと）。準備ができました。ケーブルを抜き、前 1.5m 以上の先に壁（速さの記録用）・曲がる向きと反対側の壁から 15〜20cm にして、リモコンの ▶ で始めます",
              (outerIndex_ == 0 ? ARC_BASELINE_RUN_MS : ARC_RUN_MS) / 1000.0f, ARC_LEAD_MS / 1000.0f);
 }
 
@@ -144,6 +192,26 @@ void DebugArcBehavior::begin(const SensorData &sensors, unsigned long nowMs) {
 
 void DebugArcBehavior::onStart(unsigned long nowMs) {
   begin(Sensors_Get(), nowMs);
+}
+
+// 新しい1枚があれば、前に進む速さ（中央の列の距離の縮み ÷ 時間）を足す
+void DebugArcBehavior::sampleSpeed() {
+  uint32_t readyMs;
+  int centerMm;
+  while (TofView_TakeFrameCenter(&speedSeq_, &readyMs, &centerMm)) {
+    if (speedPrevValid_ && centerMm >= 0 && readyMs > speedPrevMs_ && speedCount_ < ARC_SPEED_MAX) {
+      speedMs_[speedCount_] = (speedPrevMs_ + readyMs) / 2;
+      speedMmS_[speedCount_] = (int16_t)((speedPrevMm_ - centerMm) * 1000L / (long)(readyMs - speedPrevMs_));
+      speedCount_++;
+    } else if (speedPrevValid_ && speedCount_ < ARC_SPEED_MAX) {
+      speedMs_[speedCount_] = (speedPrevMs_ + readyMs) / 2;
+      speedMmS_[speedCount_] = SPEED_NONE;
+      speedCount_++;
+    }
+    speedPrevValid_ = centerMm >= 0;
+    speedPrevMs_ = readyMs;
+    speedPrevMm_ = centerMm;
+  }
 }
 
 void DebugArcBehavior::startArc(unsigned long nowMs) {
@@ -209,6 +277,31 @@ void DebugArcBehavior::finishRecord(End end, const SensorData &sensors, unsigned
     }
   }
 
+  // 差動の前進の始めから ARC_ANGLE_LIST_MS の時点までの角度（その時点以降の最初の記録。そこまで走っていなければ「なし」）
+  for (int i = 0; i < ARC_ANGLE_COUNT; i++) {
+    for (int k = 1; k < stepCount_; k++) {
+      if (stepMs_[k] - arcStartMs_ >= (unsigned long)ANGLE_AT_MS[i]) {
+        r.angle[i] = sign * (stepYaw_[k] - stepYaw_[0]);
+        r.angleValid |= (1 << i);
+        break;
+      }
+    }
+  }
+
+  // 前に進む速さ。差動の前進を始めた時点に最も近い刻みを「始めた時点の速さ」とする
+  r.startSpeedMmS = SPEED_NONE;
+  long bestGap = 1000000L;
+  for (int k = 0; k < speedCount_; k++) {
+    long rel = (long)speedMs_[k] - (long)arcStartMs_;
+    r.speedAtMs[r.speedCount] = (int16_t)rel;
+    r.speedMmS[r.speedCount] = speedMmS_[k];
+    r.speedCount++;
+    if (speedMmS_[k] != SPEED_NONE && labs(rel) < bestGap) {
+      bestGap = labs(rel);
+      r.startSpeedMmS = speedMmS_[k];
+    }
+  }
+
   recordHead = (recordHead + 1) % ARC_RESULT_COUNT;
   if (recordCount < ARC_RESULT_COUNT) {
     recordCount++;
@@ -271,6 +364,9 @@ void DebugArcBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) 
     }
   }
 
+  if (phase_ == PHASE_LEAD || phase_ == PHASE_ARC) {
+    sampleSpeed();
+  }
   unsigned long elapsed = nowMs - phaseStartMs_;
   switch (phase_) {
     case PHASE_PREP: {
@@ -306,7 +402,11 @@ void DebugArcBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) 
       }
       Neck_Release(NECK_OWNER_RANGE);   // 走るあいだの首は安全層が走行姿勢に保つ
       batteryStartV_ = sensors.batteryV;
-      Motion_SetSpeed(CRUISE_SPEED, ARC_LEAD_MS, nowMs);
+      speedSeq_ = 0;
+      speedPrevValid_ = false;
+      speedCount_ = 0;
+      sampleSpeed();   // 止まっているうちの最新の1枚を、速さの基準にする
+      Motion_SetSpeed(CRUISE_SPEED, ARC_LEAD_ACCEL_MS, nowMs);
       phase_ = PHASE_LEAD;
       phaseStartMs_ = nowMs;
       Log_Printf("測定", "前が空いています（通路 %.1fcm）。直進 %dms のあと差動の前進 %dms", frontCm, ARC_LEAD_MS,

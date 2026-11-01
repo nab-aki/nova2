@@ -41,6 +41,10 @@ float TofView_FloorExpectedMm(int row);
 // 車体と首が1枚の間ずっと止まっていた新しい1枚があれば out に渡す（首の向きは問わない）
 bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out);
 
+// 新しい1枚があれば、その読み終えた時刻と、中央の列（c3〜c4）の上の段（r0〜r4）の前後距離の平均を渡す（動いていても渡す。
+// 使えるマスが足りなければ負）。前進の速さを距離の減り方から測るため（曲がり測定）
+bool TofView_TakeFrameCenter(uint32_t *lastSeq, uint32_t *readyMs, int *centerMm);
+
 // いまの1枚を、車体の正面の通路で見る
 void TofView_EvaluateFront(int nearMm, TofViewResult *out);
 

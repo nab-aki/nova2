@@ -127,6 +127,9 @@
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
+#define TOF_MISMATCH_PRE_MS         1000    // 食い違った回に残す、「あり」になる前の枚の長さ（端の列 c0〜c1・c6〜c7 の上の段の距離を1枚ごとに残す）
+#define TOF_MISMATCH_PRE_FRAMES     (TOF_MISMATCH_PRE_MS / TOF_FRAME_MS + 2)   // 同じく、枚数の上限
+#define TOF_EDGE_COLS               2       // 端の列の数（左は c0〜、右は c7 から内側へ）
 
 // 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
 #define TOF_FLOOR_RATIO             0.80f   // 【仮】床の想定距離のこの割合より近ければ床ではない（走行中の r6・r7 の谷。段1 の記録）
@@ -454,9 +457,10 @@
 
 // 曲がり測定（ID27 段階1「曲がれる力を測る」。behaviors/debug_arc.*）
 // i・k・l で準備（向きと外側の値）、一時停止中にリモコンの ▶ で始める。内側の車輪は ARC_INNER_PWM、外側を ARC_OUTER_PWM_LIST の値にして前進し、ジャイロで曲がる速さを測る。
-// 測定中も ToF で止める判断と持ち上げで止める安全層は働く。やめどき：巡航に近い速さで 40°/秒【仮】以上曲がれなければ ID27 を中止（catalog.md）
+// 測定中も ToF で止める判断と持ち上げで止める安全層は働く。合否の線は決めていない（40°/秒・12cm・12° は【仮】の参考値。根拠は未確認。catalog.md）。測定の壁は通路の先 1.5m 以上に置く（速さの記録のため）
 #define PRIORITY_DEBUG_ARC          50      // 車体：曲がり測定（デバッグ回転と同じ。同時には受け付けない）
-#define ARC_LEAD_MS                 300     // 直進（0 から巡航まで加速する時間）。この間は左右同じ出力
+#define ARC_LEAD_MS                 800     // 直進の長さ（加速 ARC_LEAD_ACCEL_MS＋巡航）。この間は左右同じ出力。加速が終わるかは速さの記録を見て決める
+#define ARC_LEAD_ACCEL_MS           300     // 直進の加速時間（0 から巡航まで。通常は MOTION_ACCEL_MS＝1600ms）
 #define ARC_RUN_MS                  1500    // 差動の前進の長さ
 #define ARC_BASELINE_RUN_MS         1500    // 直進の基準（左右とも巡航の PWM）の長さ
 #define ARC_SKIP_MS                 700     // 差動の前進の最初に、集計から外す時間（回り始め）
@@ -469,6 +473,9 @@
 #define ARC_START_DELAY_MS          500     // ▶ を押してから動き出すまでの「ため」（首が動いていても最低これだけ待つ）
 #define ARC_RESULT_COUNT            8       // 結果を残す件数（電源を切るまで RAM。t で見る）
 #define ARC_MAX_STEPS               (ARC_RUN_MS / ARC_STEP_MS + 2)   // 0.1秒刻みの記録の最大数
+#define ARC_ANGLE_COUNT             3       // 差動の前進の始めから何度向きを変えたかを出す時点の数
+#define ARC_ANGLE_LIST_MS           {300, 500, 1000}   // その時点（差動の前進の始まりから）
+#define ARC_SPEED_MAX               ((ARC_LEAD_MS + ARC_RUN_MS) / TOF_FRAME_MS + 6)   // 前に進む速さ（ToF 中央の列の距離の減り方）の記録の最大数
 
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
 // 「1回の試験」＝再開してから一時停止するまで（起動時に一時停止でなければ起動から）。

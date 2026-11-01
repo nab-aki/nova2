@@ -471,6 +471,8 @@ static void HandleSerialKeys(void) {
         troubleBehavior.printLog();
         TofView_Print();
         DebugArcBehavior::PrintResults();
+        Log_Printf("メモリ", "ヒープの残り %lu バイト（起動からの最小 %lu）／loop のスタックの残り %lu バイト", (unsigned long)ESP.getFreeHeap(),
+                   (unsigned long)ESP.getMinFreeHeap(), (unsigned long)uxTaskGetStackHighWaterMark(NULL));
         break;
       case 'y': TofView_PrintFrame(); break;
       case 'c': TofView_PrintMismatchFrames(); break;
