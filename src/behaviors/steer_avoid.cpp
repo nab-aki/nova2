@@ -212,6 +212,11 @@ int SteerAvoidBehavior::priority(const SensorData &sensors, unsigned long nowMs)
     LatestRecord().partner = Arbiter_ActiveName(LAYER_BODY);
   }
   watchOutcome(nowMs);
+  // 曲がっている途中で安全層に止められた（非常停止・持ち上げなど）。安全層は調停のあとに動くので、次の調停でここへ来る。
+  // 「曲がっている」を終えないと、止まった車体で優先度を持ち続けて、ほかの振る舞いが動けなくなる
+  if (arcing_ && !Motion_IsArcing()) {
+    endBySafety(nowMs);
+  }
   if (Pause_IsPaused() || Safety_IsLifted()) {
     armed_ = false;
     historyCount_ = 0;
@@ -281,7 +286,7 @@ void SteerAvoidBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs
     return;
   }
   if (!Motion_IsArcing()) {
-    return;   // 安全層が止めた。優先度の見直しで交代する（onStop で数える）
+    return;   // 安全層が止めた。次の調停の priority() で終える
   }
   // 視野の外へ出たことは「よけきれた」の根拠にしない。記録として最後に写った距離だけ残す
   if (historyMm_[0][armedSide_] >= 0) {
@@ -295,6 +300,20 @@ void SteerAvoidBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs
   } else if (!Gyro_IsTurnUsable()) {
     finishArc("ジャイロが使えない", nowMs);
   }
+}
+
+// 安全層に止められたので、曲がるのを終える。車体はもう止まっているので、ここでは動かさない
+void SteerAvoidBehavior::endBySafety(unsigned long nowMs) {
+  float angle = (Gyro_YawDeg() - arcStartYaw_) * (armedSide_ == TOF_EDGE_LEFT ? -1.0f : 1.0f);
+  arcing_ = false;
+  endedOnce_ = true;
+  lastEndMs_ = nowMs;
+  historyCount_ = 0;
+  TestStats_RecordSteerInterrupted();
+  SetLatestEnd(angle, nowMs - arcStartMs_, lastSeenMm_);
+  SetLatestResult(STEER_RESULT_SWAPPED);
+  LatestRecord().partner = "安全層";
+  Log_Printf("よける", "曲がっている途中で安全層に止められました（%lums）", nowMs - arcStartMs_);
 }
 
 void SteerAvoidBehavior::onStop(unsigned long nowMs) {

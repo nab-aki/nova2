@@ -31,6 +31,7 @@ class SteerAvoidBehavior : public Behavior {
   void watchOutcome(unsigned long nowMs);
   void checkTrigger(unsigned long nowMs);
   void finishArc(const char *reason, unsigned long nowMs);
+  void endBySafety(unsigned long nowMs);
 
   WanderBehavior *wander_;
 
