@@ -359,8 +359,12 @@ static void RecordEdges(bool movingForward) {
   edgeView.readyMs = frame.readyMs;
   edgeView.anyMm[TOF_EDGE_LEFT] = p.left.mm;
   edgeView.anyMm[TOF_EDGE_RIGHT] = p.right.mm;
-  edgeView.nearMm[TOF_EDGE_LEFT] = NearestCell(0, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM).mm;
-  edgeView.nearMm[TOF_EDGE_RIGHT] = NearestCell(COLS - TOF_EDGE_COLS, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM).mm;
+  EdgeCell nearLeft = NearestCell(0, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM);
+  EdgeCell nearRight = NearestCell(COLS - TOF_EDGE_COLS, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM);
+  edgeView.nearMm[TOF_EDGE_LEFT] = nearLeft.mm;
+  edgeView.nearMm[TOF_EDGE_RIGHT] = nearRight.mm;
+  edgeView.nearCol[TOF_EDGE_LEFT] = nearLeft.col;
+  edgeView.nearCol[TOF_EDGE_RIGHT] = nearRight.col;
   edgeView.centerMm = p.centerMm;
   edgeViewSeq++;
   preHead = (preHead + 1) % TOF_MISMATCH_PRE_FRAMES;

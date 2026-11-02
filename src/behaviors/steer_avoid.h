@@ -22,6 +22,9 @@ class SteerAvoidBehavior : public Behavior {
   void onUpdate(const SensorData &sensors, unsigned long nowMs) override;
   void onStop(unsigned long nowMs) override;
 
+  // t キー：曲がった回ごとの記録を新しい順に出す
+  static void PrintRecords();
+
  private:
   void takeView();
   bool sideTriggers(int side, unsigned long nowMs) const;
@@ -47,6 +50,8 @@ class SteerAvoidBehavior : public Behavior {
   int16_t oppositeMm_[2] = {-1, -1};   // 最新の枚の、その側の端の列の最も近い物
   int16_t centerMm_ = -1;              // 最新の枚の、中央の列の最も近い物
   bool newView_ = false;
+  int8_t nearCol_[2] = {-1, -1};       // 最新の枚の、historyMm_[0] の列
+  bool partnerWaiting_ = false;        // 交代した相手を、次の調停で記録する
 
   bool endedOnce_ = false;
   unsigned long lastEndMs_ = 0;     // 前回曲がり終えた時刻

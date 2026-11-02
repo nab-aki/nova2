@@ -51,6 +51,7 @@ bool TofView_TakeFrameCenter(uint32_t *lastSeq, uint32_t *readyMs, int *centerMm
 struct TofEdgeView {
   uint32_t readyMs;
   int16_t nearMm[2];   // 端の列の、高さ TOF_HEAD_CLEAR_MM 未満・横の位置 STEER_SIDE_MAX_MM 以内の最も近い物
+  int8_t nearCol[2];   // nearMm の列。なければ負
   int16_t anyMm[2];    // 端の列の、条件なしの最も近い物（反対側の余裕を見る）
   int16_t centerMm;    // 中央の列（c3〜c4）の、高さ TOF_HEAD_CLEAR_MM 未満の最も近い物
 };

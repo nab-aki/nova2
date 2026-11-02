@@ -477,6 +477,7 @@
 #define STEER_HISTORY               (STEER_SHRINK_WINDOW_MS / TOF_FRAME_MS + 1)   // 覚えておく枚数（0.2秒の縮みには3枚）
 #define STEER_COOLDOWN_MS           1000    // 【仮】続けて曲がらない時間
 #define STEER_CLEARED_MS            2000    // 【仮】曲がり終えてからこの間止まらなければ「よけきれた」
+#define STEER_RECORD_COUNT          18      // 曲がった回ごとの記録の数（直近。RAM。t で見る）
 
 #define ARC_LEAD_MS                 800     // 直進の長さ（加速 ARC_LEAD_ACCEL_MS＋巡航）。この間は左右同じ出力。加速が終わるかは速さの記録を見て決める
 #define ARC_LEAD_ACCEL_MS           300     // 直進の加速時間（0 から巡航まで。通常は MOTION_ACCEL_MS＝1600ms）
