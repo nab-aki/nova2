@@ -166,8 +166,8 @@ static void PrintKeyHelp(void) {
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
   char arcList[48];
   DebugArcBehavior::OuterListText(arcList, sizeof(arcList));
-  Log_Printf("キー", "曲がり測定（ID27）：一時停止中に i:左へ曲がる  k:右へ曲がる  l:外側の値を次へ（%s→最初に戻る）で準備 → ケーブルを抜いて リモコンの ▶ で始める（準備があるときだけ。中断はどのキーか ▶）。結果は t",
-             arcList);
+  Log_Printf("キー", "曲がり測定（ID27）：一時停止中に i:左へ曲がる  k:右へ曲がる  l:外側の値を次へ（%s→最初に戻る）  9:内側を次へ（PWM%d→0(フリー)→ブレーキ→最初に戻る。起動時は PWM%d）で準備 → ケーブルを抜いて リモコンの ▶ で始める（準備があるときだけ。中断はどのキーか ▶）。結果は t",
+             arcList, ARC_INNER_PWM, ARC_INNER_PWM);
   Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
   Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
   Log_Printf("キー", "b:%dms の間、ToF の1枚を届けない（途切れで止まる試験。床の上で、歩き出してから押す）", TOF_DEBUG_HOLD_MS);
@@ -359,7 +359,7 @@ static void PrintBusStats(void) {
 }
 
 // 曲がり測定（ID27 段階1）の準備。i＝左・k＝右・l＝外側の値を次へ。一時停止中で、止まっているときだけ受け付ける
-enum ArcKey { ARC_KEY_LEFT, ARC_KEY_RIGHT, ARC_KEY_OUTER };
+enum ArcKey { ARC_KEY_LEFT, ARC_KEY_RIGHT, ARC_KEY_OUTER, ARC_KEY_INNER };
 
 static void PrepareArc(ArcKey key) {
   if (!Pause_IsPaused()) {
@@ -373,7 +373,8 @@ static void PrepareArc(ArcKey key) {
   switch (key) {
     case ARC_KEY_LEFT:  debugArcBehavior.selectLeft();  break;
     case ARC_KEY_RIGHT: debugArcBehavior.selectRight(); break;
-    default:            debugArcBehavior.nextOuter();   break;
+    case ARC_KEY_OUTER: debugArcBehavior.nextOuter();   break;
+    default:            debugArcBehavior.nextInner();   break;
   }
 }
 
@@ -485,6 +486,7 @@ static void HandleSerialKeys(void) {
       case 'i': PrepareArc(ARC_KEY_LEFT); break;
       case 'k': PrepareArc(ARC_KEY_RIGHT); break;
       case 'l': PrepareArc(ARC_KEY_OUTER); break;
+      case '9': PrepareArc(ARC_KEY_INNER); break;
       case 'o': RequestDebugScan(false); break;
       case 'u': RequestDebugScan(true); break;
       case 'h': TestStats_RequestSave(now); break;

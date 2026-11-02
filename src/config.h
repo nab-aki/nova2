@@ -32,6 +32,7 @@
                                             // 参考値。正規化速度の換算は前後とも MOTOR_PWM_MIN(675) を下限にするが、
                                             // 675 > 650 なので後退も必ず動く（ID15 の後退はこの換算のまま使う）
 #define MOTOR_PWM_LIMIT             2000    // 安全のための上限（tools/pwm_test と同じ）
+#define MOTOR_PWM_BRAKE             32767   // Motor_DrivePwm に渡す特別な値：その側の車輪をブレーキにする（DRV8837 の IN1・IN2 を両方 High。hal_motor.cpp）
 #define MOTOR_SPEED_EPSILON         0.01f   // 正規化速度（-1〜1）がこれ未満なら停止として扱う
 
 // その場回転・片側旋回（ID25）は、4輪の横滑りのため動き出しに大きな力が要る。ただし回り出せば下げても回り続ける。
@@ -466,7 +467,9 @@
 #define ARC_SKIP_MS                 700     // 差動の前進の最初に、集計から外す時間（回り始め）
 #define ARC_PARTIAL_MIN_MS          400     // ToF などで途中で止まったとき、集計の時間がこれ以上なら、それまでの平均を出す
 #define ARC_STEP_MS                 100     // 曲がる速さを出す刻み
-#define ARC_INNER_PWM               MOTOR_PWM_MIN   // 内側の車輪（これより下げると動かない）
+#define ARC_INNER_PWM               MOTOR_PWM_MIN   // 内側の車輪の起動時の値（キー 9 で切り替える）
+#define ARC_INNER_COUNT             3       // 内側の選び方の数
+#define ARC_INNER_LIST              {ARC_INNER_PWM, 0, MOTOR_PWM_BRAKE}   // 675 → 0（フリー）→ ブレーキ → 最初に戻る
 #define ARC_OUTER_PWM_COUNT         3       // 外側の値の数（先頭の「直進の基準」は別）
 #define ARC_OUTER_PWM_LIST          {800, 900, 1000}
 #define ARC_PREP_TIMEOUT_MS         3000    // 首が走行姿勢で安定し、判定が決まるまで待つ上限

@@ -64,6 +64,14 @@ void Pca9685_SetPulseWidth(uint8_t channel, uint16_t pulseWidth) {
   SyncI2cStats();
 }
 
+// 常時 ON：LEDn_ON に 0x1000（＝ON_H の bit4＝full ON、遅れ 0）、LEDn_OFF に 0（OFF_H の bit4＝full OFF は 0）を書く。
+// full ON と full OFF が同時に 1 だと full OFF が優先される（データシート 7.3.3 の Remark）ので、OFF 側は必ず 0 にする。
+// ライブラリは ON に TIME_MAX（4096＝0x1000）を渡すと、そのまま ON_H の bit4 に書く
+void Pca9685_SetFullOn(uint8_t channel) {
+  pca9685.setChannelOnAndOffTime(channel, 4096, 0);
+  SyncI2cStats();
+}
+
 // 読み戻し。レジスタの番号と並びはライブラリのソース（lib/PCA9685/src/PCA9685.h・PCA9685.cpp）で確認した：
 // LED0_ON_L＝0x06 から、チャンネルごとに4バイト（ON_L・ON_H・OFF_L・OFF_H）。getChannelOnAndOffTime() が
 // レジスタ番号を書いてから4バイトを続けて読む（MODE1 の AI＝オートインクリメントが 1 であることが前提。初期化で 1 にしている）。

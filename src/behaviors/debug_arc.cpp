@@ -43,6 +43,7 @@ static uint32_t recordTotal = 0;   // 起動からの通し番号
 static int recordHead = 0;         // 次に書く場所
 
 static const int OUTER_PWMS[ARC_OUTER_PWM_COUNT] = ARC_OUTER_PWM_LIST;
+static const int INNER_PWMS[ARC_INNER_COUNT] = ARC_INNER_LIST;
 static const int ANGLE_AT_MS[ARC_ANGLE_COUNT] = ARC_ANGLE_LIST_MS;
 #define SPEED_NONE INT16_MIN
 
@@ -63,6 +64,18 @@ void DebugArcBehavior::OuterListText(char *buffer, size_t size) {
   }
 }
 
+// 車輪に出す値の表示。0＝フリー、MOTOR_PWM_BRAKE＝ブレーキ
+static const char *WheelText(int pwm, char *buffer, size_t size) {
+  if (pwm == MOTOR_PWM_BRAKE) {
+    snprintf(buffer, size, "ブレーキ");
+  } else if (pwm == 0) {
+    snprintf(buffer, size, "0(フリー)");
+  } else {
+    snprintf(buffer, size, "PWM%d", pwm);
+  }
+  return buffer;
+}
+
 static void PrintRecord(const ArcRecord &r, uint32_t number) {
   const char *kind = r.dir == 0 ? "直進の基準" : (r.dir > 0 ? "左へ曲がる" : "右へ曲がる");
   char average[96];
@@ -73,8 +86,17 @@ static void PrintRecord(const ArcRecord &r, uint32_t number) {
     snprintf(average, sizeof(average), "平均なし（集計の時間が %dms 未満）", ARC_PARTIAL_MIN_MS);
   }
   const char *note = (r.end != 0 && r.hasAverage) ? "【途中で止まった回のそれまでの平均。参考】" : "";
-  Log_Printf("測定", "結果 #%lu %s 左PWM%d・右PWM%d：%s %s／回った角度 %.1f°（差動 %dms）／電池 %.2f→%.2fV／%s／起動から %lu秒",
-             (unsigned long)number, kind, r.leftPwm, r.rightPwm, average, note, r.totalDeg, r.runMs,
+  char leftText[20];
+  char rightText[20];
+  char innerText[40] = "";
+  WheelText(r.leftPwm, leftText, sizeof(leftText));
+  WheelText(r.rightPwm, rightText, sizeof(rightText));
+  if (r.dir != 0) {
+    char inner[20];
+    snprintf(innerText, sizeof(innerText), "（内側 %s）", WheelText(r.dir > 0 ? r.leftPwm : r.rightPwm, inner, sizeof(inner)));
+  }
+  Log_Printf("測定", "結果 #%lu %s%s 左%s・右%s：%s %s／回った角度 %.1f°（差動 %dms）／電池 %.2f→%.2fV／%s／起動から %lu秒",
+             (unsigned long)number, kind, innerText, leftText, rightText, average, note, r.totalDeg, r.runMs,
              r.batteryStartV, r.batteryEndV, EndName(r.end), (unsigned long)r.uptimeSec);
   // 0.1 秒ごとの曲がる速さ。最初の ARC_SKIP_MS は集計外（| の左）
   char line[300];
@@ -140,14 +162,21 @@ int DebugArcBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
 void DebugArcBehavior::printSetting(const char *prefix) const {
   char list[48];
   OuterListText(list, sizeof(list));
+  char innerText[24];
+  WheelText(INNER_PWMS[innerIndex_], innerText, sizeof(innerText));
   if (outerIndex_ == 0) {
-    Log_Printf("測定", "%s直進の基準（左右とも PWM%d。向きは使わない）。外側の値は l で次へ（%s→最初に戻る）",
-               prefix, Motor_SpeedToPwm(CRUISE_SPEED), list);
+    Log_Printf("測定", "%s直進の基準（左右とも PWM%d。向きと内側は使わない。内側の選択は %s）。外側の値は l で次へ（%s→最初に戻る）。内側は 9 で次へ（PWM%d→0(フリー)→ブレーキ→最初に戻る）",
+               prefix, Motor_SpeedToPwm(CRUISE_SPEED), innerText, list, ARC_INNER_PWM);
   } else {
     int outer = OUTER_PWMS[outerIndex_ - 1];
-    Log_Printf("測定", "%s%sへ曲がる：内側 PWM%d・外側 PWM%d（左PWM%d・右PWM%d）。外側の値は l で次へ（%s→最初に戻る）",
-               prefix, dir_ > 0 ? "左" : "右", ARC_INNER_PWM, outer,
-               dir_ > 0 ? ARC_INNER_PWM : outer, dir_ > 0 ? outer : ARC_INNER_PWM, list);
+    char outerText[24];
+    char leftText[24];
+    char rightText[24];
+    WheelText(outer, outerText, sizeof(outerText));
+    WheelText(dir_ > 0 ? INNER_PWMS[innerIndex_] : outer, leftText, sizeof(leftText));
+    WheelText(dir_ > 0 ? outer : INNER_PWMS[innerIndex_], rightText, sizeof(rightText));
+    Log_Printf("測定", "%s%sへ曲がる：内側 %s・外側 %s（左 %s・右 %s）。外側は l で次へ（%s→最初に戻る）、内側は 9 で次へ（PWM%d→0(フリー)→ブレーキ→最初に戻る）",
+               prefix, dir_ > 0 ? "左" : "右", innerText, outerText, leftText, rightText, list, ARC_INNER_PWM);
   }
   Log_Printf("測定", "  差動の前進 %.1f秒（直進 %.1f秒のあと）。準備ができました。ケーブルを抜き、前 1.5m 以上の先に壁（速さの記録用）・曲がる向きと反対側の壁から 15〜20cm にして、リモコンの ▶ で始めます",
              (outerIndex_ == 0 ? ARC_BASELINE_RUN_MS : ARC_RUN_MS) / 1000.0f, ARC_LEAD_MS / 1000.0f);
@@ -171,6 +200,12 @@ void DebugArcBehavior::nextOuter() {
   printSetting("設定：");
 }
 
+void DebugArcBehavior::nextInner() {
+  innerIndex_ = (innerIndex_ + 1) % ARC_INNER_COUNT;
+  prepared_ = true;
+  printSetting("設定：");
+}
+
 void DebugArcBehavior::request() {
   requested_ = true;
 }
@@ -186,17 +221,21 @@ void DebugArcBehavior::begin(const SensorData &sensors, unsigned long nowMs) {
     runLeftPwm_ = runRightPwm_ = Motor_SpeedToPwm(CRUISE_SPEED);
   } else {
     int outer = OUTER_PWMS[runOuterIndex_ - 1];
-    runLeftPwm_ = runDir_ > 0 ? ARC_INNER_PWM : outer;
-    runRightPwm_ = runDir_ > 0 ? outer : ARC_INNER_PWM;
+    runInnerPwm_ = INNER_PWMS[innerIndex_];
+    runLeftPwm_ = runDir_ > 0 ? runInnerPwm_ : outer;
+    runRightPwm_ = runDir_ > 0 ? outer : runInnerPwm_;
   }
   batteryStartV_ = sensors.batteryV;
   stepCount_ = 0;
   phase_ = PHASE_PREP;
   phaseStartMs_ = nowMs;
   prepStartMs_ = nowMs;
-  Log_Printf("測定", "曲がり測定を始めます：%s／左PWM%d・右PWM%d。首を走行姿勢にして、前が空いているか確かめます（電池 %.2fV）",
+  char leftText[24];
+  char rightText[24];
+  Log_Printf("測定", "曲がり測定を始めます：%s／左 %s・右 %s。首を走行姿勢にして、前が空いているか確かめます（電池 %.2fV）",
              runOuterIndex_ == 0 ? "直進の基準" : (runDir_ > 0 ? "左へ曲がる" : "右へ曲がる"),
-             runLeftPwm_, runRightPwm_, batteryStartV_);
+             WheelText(runLeftPwm_, leftText, sizeof(leftText)), WheelText(runRightPwm_, rightText, sizeof(rightText)),
+             batteryStartV_);
 }
 
 void DebugArcBehavior::onStart(unsigned long nowMs) {

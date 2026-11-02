@@ -30,6 +30,7 @@ class DebugArcBehavior : public Behavior {
   void selectLeft();
   void selectRight();
   void nextOuter();
+  void nextInner();   // 内側：675 → 0（フリー）→ ブレーキ → 最初に戻る（キー 9）
   bool isPrepared() const { return prepared_; }
   void cancelPrepare() { prepared_ = false; }
 
@@ -58,6 +59,7 @@ class DebugArcBehavior : public Behavior {
   bool prepared_ = false;
   bool requested_ = false;
   int dir_ = 1;            // 1＝左へ曲がる、-1＝右へ曲がる
+  int innerIndex_ = 0;     // ARC_INNER_LIST の番号（起動時は 675）
   int outerIndex_ = 0;     // 0＝直進の基準、1〜＝外側の値の一覧の番号（1 始まり）
   Phase phase_ = PHASE_IDLE;
   unsigned long phaseStartMs_ = 0;   // 現在の区間の始まり
@@ -67,6 +69,7 @@ class DebugArcBehavior : public Behavior {
   // この回の設定（始めた時点の値を固定する）
   int runDir_ = 1;
   int runOuterIndex_ = 0;
+  int runInnerPwm_ = 0;
   int runLeftPwm_ = 0;
   int runRightPwm_ = 0;
   float batteryStartV_ = 0.0f;
