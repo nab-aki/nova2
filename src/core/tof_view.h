@@ -45,6 +45,19 @@ bool TofView_TakeStillFrame(uint32_t *lastSeq, const TofFrame **out);
 // 使えるマスが足りなければ負）。前進の速さを距離の減り方から測るため（曲がり測定）
 bool TofView_TakeFrameCenter(uint32_t *lastSeq, uint32_t *readyMs, int *centerMm);
 
+// ID27：判定に使った枚の、端の列と中央の列（r0〜r4）。距離は前後の距離 mm。なければ負
+#define TOF_EDGE_LEFT  0
+#define TOF_EDGE_RIGHT 1
+struct TofEdgeView {
+  uint32_t readyMs;
+  int16_t nearMm[2];   // 端の列の、高さ TOF_HEAD_CLEAR_MM 未満・横の位置 STEER_SIDE_MAX_MM 以内の最も近い物
+  int16_t anyMm[2];    // 端の列の、条件なしの最も近い物（反対側の余裕を見る）
+  int16_t centerMm;    // 中央の列（c3〜c4）の、高さ TOF_HEAD_CLEAR_MM 未満の最も近い物
+};
+
+// 判定に使った新しい枚があれば out に渡す
+bool TofView_TakeEdgeView(uint32_t *lastSeq, TofEdgeView *out);
+
 // いまの1枚を、車体の正面の通路で見る
 void TofView_EvaluateFront(int nearMm, TofViewResult *out);
 

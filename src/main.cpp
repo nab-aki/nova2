@@ -27,6 +27,7 @@
 #include "behaviors/stuck.h"
 #include "behaviors/stuck_eyes.h"
 #include "behaviors/trouble.h"
+#include "behaviors/steer_avoid.h"
 #include "behaviors/wander.h"
 #include "config.h"
 #include "core/arbiter.h"
@@ -51,6 +52,7 @@ static BlinkBehavior blinkBehavior;
 static NoticeBehavior noticeBehavior;
 static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
 static WanderBehavior wanderBehavior;
+static SteerAvoidBehavior steerAvoidBehavior(&wanderBehavior);
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
 static DebugGyroSpinBehavior debugGyroSpinBehavior;
@@ -544,6 +546,7 @@ void setup() {
   Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&stuckBehavior);
   Arbiter_Register(&noticeBehavior);
+  Arbiter_Register(&steerAvoidBehavior);
   Arbiter_Register(&wanderBehavior);
   Arbiter_Register(&pauseCueBehavior);
   Arbiter_Register(&stuckEyesBehavior);

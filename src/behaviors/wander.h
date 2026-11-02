@@ -43,6 +43,13 @@ class WanderBehavior : public Behavior {
   // 見えていない向きが1周続いて、回るのをやめているか（「？」の目）
   bool isGivenUp() const { return givenUp_; }
 
+  // ID27：巡航中・加速中か（交代している間は古い値なので、実行中のときだけ見る）
+  bool isCruising() const { return state_ == STATE_CRUISE; }
+  bool isAccelerating() const { return state_ == STATE_ACCEL; }
+
+  // ID27：普通に曲がり終えたので、次の onStart で止まらずに巡航へ戻してほしい
+  void requestCruiseResume() { cruiseResume_ = true; }
+
   // 回るのをやめたので一時停止してほしいか（1回だけ true を返す。main.cpp が一時停止にする）
   bool takePauseRequest();
 
@@ -95,6 +102,7 @@ class WanderBehavior : public Behavior {
   bool recoverBackStopping_ = false;  // 後退の減速に入ったか（trouble.cpp の backStopping_ と同じ考え方）
   unsigned long runMs_ = 0;        // この回の巡航時間（ランダム）
   bool lifted_ = false;            // 持ち上げられている間は状態を進めない
+  bool cruiseResume_ = false;      // ID27 のあと、止まらずに巡航へ戻る
 };
 
 #endif // NOVA_BEHAVIORS_WANDER_H

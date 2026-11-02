@@ -128,7 +128,7 @@
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
-#define TOF_MISMATCH_PRE_MS         1000    // 食い違った回に残す、「あり」になる前の枚の長さ（端の列 c0〜c1・c6〜c7 の上の段の距離を1枚ごとに残す）
+#define TOF_MISMATCH_PRE_MS         3000    // 食い違った回に残す、「あり」になる前の枚の長さ（端の列 c0〜c1・c6〜c7 と中央の列 c3〜c4 の上の段の距離、止まっていた枚か、を1枚ごとに残す）
 #define TOF_MISMATCH_PRE_FRAMES     (TOF_MISMATCH_PRE_MS / TOF_FRAME_MS + 2)   // 同じく、枚数の上限
 #define TOF_EDGE_COLS               2       // 端の列の数（左は c0〜、右は c7 から内側へ）
 
@@ -261,6 +261,7 @@
 // 車体：デバッグ回転 > 困る > うろうろの後退+その場回転 > 気づく > うろうろ（安全 > 立て直し > 張りつき対策 > 反応 > 気まま）。
 // 数値の基準は docs/decisions.md に積み上げる。
 #define PRIORITY_WANDER             20      // 車体：ID25 うろうろ（既定の振る舞い）
+#define PRIORITY_STEER_AVOID        25      // 車体：ID27 進みながらよける（うろうろより上、気づくより下。止まる判断が必ず勝つ）
 #define PRIORITY_NOTICE             30      // 車体：ID9 気づく（20 から変更）
 #define PRIORITY_WANDER_RECOVER     35      // 車体：ID25 の後退+その場回転（横がとても近いときの張りつき対策）。
                                             // ID15 の立て直しと同じく、気づく（30）に割り込まれず最後までやり切る
@@ -460,6 +461,23 @@
 // i・k・l で準備（向きと外側の値）、一時停止中にリモコンの ▶ で始める。内側の車輪は ARC_INNER_PWM、外側を ARC_OUTER_PWM_LIST の値にして前進し、ジャイロで曲がる速さを測る。
 // 測定中も ToF で止める判断と持ち上げで止める安全層は働く。合否の線は決めていない（40°/秒・12cm・12° は【仮】の参考値。根拠は未確認。catalog.md）。測定の壁は通路の先 1.5m 以上に置く（速さの記録のため）
 #define PRIORITY_DEBUG_ARC          50      // 車体：曲がり測定（デバッグ回転と同じ。同時には受け付けない）
+// ID27 進みながらよける（docs/specs/27_steer_avoid.md）
+#define STEER_TRIGGER_MM            700     // 【仮】これより近い端の列の物でよける（止まる距離 380mm＋曲がる間に進む約 30cm）
+#define STEER_OUTER_PWM             1000    // 【仮】外側の車輪。段階1 の出発点
+#define STEER_INNER_PWM             0       // 内側の車輪。フリー（ブレーキは次の候補。今は使わない）
+#define STEER_MAX_DEG               30.0f   // 【仮】曲がる角度の上限
+#define STEER_MAX_MS                1600    // 【仮】曲がる時間の上限（フリーで 30° に約 1.25秒）
+#define STEER_OPPOSITE_CLEAR_MM     600     // 【仮】反対側の端の列の最も近い物がこれより遠いときだけ曲がる
+#define STEER_SIDE_MAX_MM           200     // 【仮】車体の中心からの横の位置がこれ以内の物だけ見る
+#define STEER_EDGE_LEAD_MM          50      // 【仮】端の列が中央の列（c3〜c4）よりこれ以上近いときだけ使う
+#define STEER_NEAR_FRAMES           2       // 【仮】続けて写る枚数
+#define STEER_SHRINK_WINDOW_MS      200     // 【仮】縮みを見る時間
+#define STEER_SHRINK_MM             20      // 【仮】この時間に縮む距離
+#define STEER_SHRINK_SLACK_MS       60      // 枚の周期のばらつき（実測の周期 99〜106ms）。これより外れたら枚が抜けたとみなす
+#define STEER_HISTORY               (STEER_SHRINK_WINDOW_MS / TOF_FRAME_MS + 1)   // 覚えておく枚数（0.2秒の縮みには3枚）
+#define STEER_COOLDOWN_MS           1000    // 【仮】続けて曲がらない時間
+#define STEER_CLEARED_MS            2000    // 【仮】曲がり終えてからこの間止まらなければ「よけきれた」
+
 #define ARC_LEAD_MS                 800     // 直進の長さ（加速 ARC_LEAD_ACCEL_MS＋巡航）。この間は左右同じ出力。加速が終わるかは速さの記録を見て決める
 #define ARC_LEAD_ACCEL_MS           300     // 直進の加速時間（0 から巡航まで。通常は MOTION_ACCEL_MS＝1600ms）
 #define ARC_RUN_MS                  1500    // 差動の前進の長さ

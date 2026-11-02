@@ -63,6 +63,16 @@ struct TestRecord {
   uint32_t troubleWaitSumMs;    // 同じく、困るを挟んだ回
   uint32_t troubleWaitMaxMs;
   uint16_t troubleWaitCount;
+  uint16_t steerLeft;           // ID27：左へ曲がった回数
+  uint16_t steerRight;          // ID27：右へ曲がった回数
+  uint16_t steerCleared;        // ID27：よけきれた回数
+  uint16_t steerStopped;        // ID27：曲がり終えてから STEER_CLEARED_MS より前に止まった回数
+  uint16_t steerInterrupted;    // ID27：曲がっている途中で交代した回数
+  uint16_t steerChained;        // ID27：結果が決まる前に、また曲がった回数
+  uint16_t steerAccelMiss;      // ID27：加速中にきっかけを満たして、曲がらなかった回数
+  uint16_t steerNextCount;      // ID27：曲がり終えてから次に止まるまでの時間の回数
+  uint32_t steerNextSumMs;
+  uint32_t steerNextMinMs;
 };
 
 // NVSに保存する全体。直近3回分のリングバッファ
@@ -73,7 +83,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E35u  // "TSN5"（段2 の項目を足した）
+#define TEST_STATS_MAGIC  0x54534E36u  // "TSN6"（ID27 の項目を足した）
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -376,6 +386,47 @@ void TestStats_RecordStopGap(int gapMm, int sideMm) {
   }
 }
 
+void TestStats_RecordSteerStart(bool toLeft) {
+  if (!recording) {
+    return;
+  }
+  if (toLeft) {
+    current.steerLeft++;
+  } else {
+    current.steerRight++;
+  }
+}
+
+void TestStats_RecordSteerCleared(void) {
+  if (recording) current.steerCleared++;
+}
+
+void TestStats_RecordSteerInterrupted(void) {
+  if (recording) current.steerInterrupted++;
+}
+
+void TestStats_RecordSteerChained(void) {
+  if (recording) current.steerChained++;
+}
+
+void TestStats_RecordSteerAccelMiss(void) {
+  if (recording) current.steerAccelMiss++;
+}
+
+void TestStats_RecordSteerNextStop(unsigned long msSinceEnd, bool withinWindow) {
+  if (!recording) {
+    return;
+  }
+  if (withinWindow) {
+    current.steerStopped++;
+  }
+  if (current.steerNextCount == 0 || msSinceEnd < current.steerNextMinMs) {
+    current.steerNextMinMs = msSinceEnd;
+  }
+  current.steerNextSumMs += msSinceEnd;
+  current.steerNextCount++;
+}
+
 void TestStats_RecordLoopUs(uint32_t us) {
   if (!recording) {
     return;
@@ -482,6 +533,10 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              slot, r.wanderWaitCount > 0 ? r.wanderWaitSumMs / 1000.0f / r.wanderWaitCount : 0.0f, r.wanderWaitMaxMs / 1000.0f, r.wanderWaitCount,
              r.troubleWaitCount > 0 ? r.troubleWaitSumMs / 1000.0f / r.troubleWaitCount : 0.0f, r.troubleWaitMaxMs / 1000.0f, r.troubleWaitCount,
              r.gapMinMm, r.sideMinMm, LOOP_VERY_SLOW_MS, (unsigned long)r.loopForwardVerySlowCount);
+  Log_Printf("試験", "[%d]  ID27：曲がった 左 %u回・右 %u回 よけきれた %u回 曲がったあとに止まった %u回 途中で交代 %u回 続けて曲がった %u回 加速中で見送り %u回 次に止まるまで 平均 %.1f秒／最小 %.1f秒（%u回） 前進 1秒あたりの止まる回数 %.2f回/秒",
+             slot, r.steerLeft, r.steerRight, r.steerCleared, r.steerStopped, r.steerInterrupted, r.steerChained, r.steerAccelMiss,
+             r.steerNextCount > 0 ? r.steerNextSumMs / 1000.0f / r.steerNextCount : 0.0f, r.steerNextMinMs / 1000.0f, r.steerNextCount,
+             r.forwardMs > 0 ? r.stopCount * 1000.0f / r.forwardMs : 0.0f);
   Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回・約 %lu回/秒。%dms 超 %lu回・%dms 超 %lu回）",
              slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
              (unsigned long)r.loopCount, elapsedMs > 0 ? (unsigned long)(r.loopCount * 1000.0f / elapsedMs) : 0UL,

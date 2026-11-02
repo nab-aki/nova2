@@ -106,12 +106,16 @@ struct PreFrame {
   uint32_t readyMs;      // その枚を読み終えた時刻
   EdgeCell left;
   EdgeCell right;
+  int16_t centerMm;      // 中央の列（c3〜c4）の、高さ TOF_HEAD_CLEAR_MM 未満の最も近い前後距離。なければ負
+  bool moving;           // 前進の速度が出ていた枚か
 };
 
 struct PreCell {
   int16_t agoMs;         // 「あり」になった時刻より何ms前の枚か
   EdgeCell left;
   EdgeCell right;
+  int16_t centerMm;
+  bool moving;
 };
 
 struct MismatchFollow {
@@ -145,6 +149,8 @@ struct Mismatch {
 static PreFrame preRing[TOF_MISMATCH_PRE_FRAMES];   // 判定に使った直近の枚の端の列
 static int preHead = 0;                              // 次に書く場所
 static int preCount = 0;
+static TofEdgeView edgeView;                         // ID27 に渡す、判定に使った最新の枚
+static uint32_t edgeViewSeq = 0;
 
 static Mismatch mismatchRing[TOF_MISMATCH_RECORDS];
 static uint32_t mismatchTotal = 0;     // 起動からの件数（リングより多いと古いものは消えている）
@@ -190,6 +196,15 @@ void TofView_PointForPan(int row, int col, int distanceMm, int panDeg, float *x,
 
 float TofView_FloorExpectedMm(int row) {
   return floorExpectedMm[row - FLOOR_ROW_FIRST];
+}
+
+bool TofView_TakeEdgeView(uint32_t *lastSeq, TofEdgeView *out) {
+  if (edgeViewSeq == *lastSeq) {
+    return false;
+  }
+  *lastSeq = edgeViewSeq;
+  *out = edgeView;
+  return true;
 }
 
 bool TofView_TakeFrameCenter(uint32_t *lastSeq, uint32_t *readyMs, int *centerMm) {
@@ -305,8 +320,8 @@ static void ScanCorridor(CorridorScan *out) {
   }
 }
 
-// 端の列（cols[0..n-1]）の上の段で、通路の中かどうかによらず最も近い点
-static EdgeCell NearestEdge(int firstCol, int cols) {
+// 列（firstCol から cols 列）の上の段で、通路の中かどうかによらず最も近い点。maxH・maxSide より外のマスは見ない
+static EdgeCell NearestCell(int firstCol, int cols, float maxH, float maxSide) {
   int pan = Servo_GetAngle(SERVO_PAN);
   EdgeCell best = {-1, -1, -1, false};
   float bestX = 1e9f;
@@ -319,6 +334,9 @@ static EdgeCell NearestEdge(int firstCol, int cols) {
       }
       float x, y, h;
       TofView_PointForPan(row, col, d, pan, &x, &y, &h);
+      if (h >= maxH || fabsf(y) > maxSide) {
+        continue;
+      }
       if (x < bestX) {
         bestX = x;
         best = EdgeCell{(int16_t)x, (int8_t)row, (int8_t)col, InCorridor(y, h)};
@@ -329,11 +347,22 @@ static EdgeCell NearestEdge(int firstCol, int cols) {
 }
 
 // この1枚の端の列を、直近の枚の記録へ足す
-static void RecordEdges(void) {
+static void RecordEdges(bool movingForward) {
+  const float NO_LIMIT = 1e9f;
   PreFrame &p = preRing[preHead];
   p.readyMs = frame.readyMs;
-  p.left = NearestEdge(0, TOF_EDGE_COLS);
-  p.right = NearestEdge(COLS - TOF_EDGE_COLS, TOF_EDGE_COLS);
+  p.left = NearestCell(0, TOF_EDGE_COLS, NO_LIMIT, NO_LIMIT);
+  p.right = NearestCell(COLS - TOF_EDGE_COLS, TOF_EDGE_COLS, NO_LIMIT, NO_LIMIT);
+  p.centerMm = NearestCell(3, 2, TOF_HEAD_CLEAR_MM, NO_LIMIT).mm;
+  p.moving = movingForward;
+  // ID27 に渡す分
+  edgeView.readyMs = frame.readyMs;
+  edgeView.anyMm[TOF_EDGE_LEFT] = p.left.mm;
+  edgeView.anyMm[TOF_EDGE_RIGHT] = p.right.mm;
+  edgeView.nearMm[TOF_EDGE_LEFT] = NearestCell(0, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM).mm;
+  edgeView.nearMm[TOF_EDGE_RIGHT] = NearestCell(COLS - TOF_EDGE_COLS, TOF_EDGE_COLS, TOF_HEAD_CLEAR_MM, STEER_SIDE_MAX_MM).mm;
+  edgeView.centerMm = p.centerMm;
+  edgeViewSeq++;
   preHead = (preHead + 1) % TOF_MISMATCH_PRE_FRAMES;
   if (preCount < TOF_MISMATCH_PRE_FRAMES) {
     preCount++;
@@ -345,7 +374,7 @@ static void MismatchBegin(Mismatch *m, MismatchKind kind, unsigned long nowMs) {
   const SensorData &s = Sensors_Get();
   CorridorScan scan;
   ScanCorridor(&scan);
-  *m = Mismatch{};
+  memset(m, 0, sizeof(*m));   // 大きいのでスタックに一時領域を作らない
   m->kind = (uint8_t)kind;
   m->timeMs = nowMs;
   m->speed = Motion_GetSpeed();
@@ -365,7 +394,7 @@ static void MismatchBegin(Mismatch *m, MismatchKind kind, unsigned long nowMs) {
     if (ago > TOF_MISMATCH_PRE_MS) {
       continue;
     }
-    m->pre[m->preCount++] = PreCell{(int16_t)max(ago, 0L), p.left, p.right};
+    m->pre[m->preCount++] = PreCell{(int16_t)max(ago, 0L), p.left, p.right, p.centerMm, p.moving};
   }
 }
 
@@ -523,7 +552,7 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   }
 
   RecordGap();
-  RecordEdges();
+  RecordEdges(movingForward);
 
   CorridorScan scan;
   ScanCorridor(&scan);
@@ -887,14 +916,17 @@ static void FormatEdge(char *buffer, size_t size, const EdgeCell &e) {
 
 // 「あり」になる前の枚。端の列の上の段（r0〜r4）の最も近い前後距離と、通路の中(内)か外か
 static void PrintPre(const Mismatch &m) {
-  Log_Printf("ToF", "     あり になる前 %dms の枚（古い順。秒＝「あり」の何秒前。左＝c0〜c1・右＝c6〜c7 の r0〜r4 の最も近い前後距離。内＝通路の中・外＝通路の外）:",
-             TOF_MISMATCH_PRE_MS);
+  Log_Printf("ToF", "     あり になる前 %dms の枚（古い順。秒＝「あり」の何秒前。動＝前進中の枚・止＝止まっていた枚。左＝c0〜c1・右＝c6〜c7 の r0〜r4 の最も近い前後距離。内＝通路の中・外＝通路の外。中＝c3〜c4 の高さ %dmm 未満の最も近い前後距離）:",
+             TOF_MISMATCH_PRE_MS, TOF_HEAD_CLEAR_MM);
   for (int k = 0; k < m.preCount; k++) {
     char left[32];
     char right[32];
     FormatEdge(left, sizeof(left), m.pre[k].left);
     FormatEdge(right, sizeof(right), m.pre[k].right);
-    Log_Printf("ToF", "       -%.1fs 左 %s 右 %s", m.pre[k].agoMs / 1000.0f, left, right);
+    char center[16];
+    if (m.pre[k].centerMm < 0) snprintf(center, sizeof(center), "写らず");
+    else snprintf(center, sizeof(center), "%dmm", m.pre[k].centerMm);
+    Log_Printf("ToF", "       -%.1fs %s 左 %s 右 %s 中 %s", m.pre[k].agoMs / 1000.0f, m.pre[k].moving ? "動" : "止", left, right, center);
   }
 }
 
