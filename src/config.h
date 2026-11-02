@@ -467,8 +467,8 @@
 #define ARC_PARTIAL_MIN_MS          400     // ToF などで途中で止まったとき、集計の時間がこれ以上なら、それまでの平均を出す
 #define ARC_STEP_MS                 100     // 曲がる速さを出す刻み
 #define ARC_INNER_PWM               MOTOR_PWM_MIN   // 内側の車輪（これより下げると動かない）
-#define ARC_OUTER_PWM_COUNT         4       // 外側の値の数（先頭の「直進の基準」は別）
-#define ARC_OUTER_PWM_LIST          {726, 800, 900, 1000}
+#define ARC_OUTER_PWM_COUNT         3       // 外側の値の数（先頭の「直進の基準」は別）
+#define ARC_OUTER_PWM_LIST          {800, 900, 1000}
 #define ARC_PREP_TIMEOUT_MS         3000    // 首が走行姿勢で安定し、判定が決まるまで待つ上限
 #define ARC_START_DELAY_MS          500     // ▶ を押してから動き出すまでの「ため」（首が動いていても最低これだけ待つ）
 #define ARC_RESULT_COUNT            8       // 結果を残す件数（電源を切るまで RAM。t で見る）

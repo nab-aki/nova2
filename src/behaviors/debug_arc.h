@@ -42,6 +42,7 @@ class DebugArcBehavior : public Behavior {
 
   // t キー：直近の結果を新しい順に出す
   static void PrintResults();
+  static void OuterListText(char *buffer, size_t size);   // 「基準→800→…」
 
  private:
   enum Phase { PHASE_IDLE, PHASE_PREP, PHASE_LEAD, PHASE_ARC, PHASE_STOPPING };

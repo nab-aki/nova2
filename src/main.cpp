@@ -146,7 +146,6 @@ static unsigned long ContTurnMs(void) {
   return (unsigned long)(DEBUG_CONT_TURN_DEG * ROTATE_CONT_MS_PER_DEG + 0.5f);
 }
 
-static const int kArcOuterPwm[ARC_OUTER_PWM_COUNT] = ARC_OUTER_PWM_LIST;   // 曲がり測定の外側の値（キーの説明用）
 
 static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %d°。ジャイロの角度で止める。使えないとき・上限は %dms）",
@@ -165,8 +164,10 @@ static void PrintKeyHelp(void) {
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
-  Log_Printf("キー", "曲がり測定（ID27）：一時停止中に i:左へ曲がる  k:右へ曲がる  l:外側の値を次へ（基準→%d→%d→%d→%d）で準備 → ケーブルを抜いて リモコンの ▶ で始める（準備があるときだけ。中断はどのキーか ▶）。結果は t",
-             kArcOuterPwm[0], kArcOuterPwm[1], kArcOuterPwm[2], kArcOuterPwm[3]);
+  char arcList[48];
+  DebugArcBehavior::OuterListText(arcList, sizeof(arcList));
+  Log_Printf("キー", "曲がり測定（ID27）：一時停止中に i:左へ曲がる  k:右へ曲がる  l:外側の値を次へ（%s→最初に戻る）で準備 → ケーブルを抜いて リモコンの ▶ で始める（準備があるときだけ。中断はどのキーか ▶）。結果は t",
+             arcList);
   Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
   Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
   Log_Printf("キー", "b:%dms の間、ToF の1枚を届けない（途切れで止まる試験。床の上で、歩き出してから押す）", TOF_DEBUG_HOLD_MS);

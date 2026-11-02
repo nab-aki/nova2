@@ -55,6 +55,14 @@ static const char *EndName(uint8_t end) {
   }
 }
 
+// 「基準→800→900→1000」の形の、l で選ぶ値の一覧
+void DebugArcBehavior::OuterListText(char *buffer, size_t size) {
+  int n = snprintf(buffer, size, "基準");
+  for (int i = 0; i < ARC_OUTER_PWM_COUNT && n < (int)size; i++) {
+    n += snprintf(buffer + n, size - n, "→%d", OUTER_PWMS[i]);
+  }
+}
+
 static void PrintRecord(const ArcRecord &r, uint32_t number) {
   const char *kind = r.dir == 0 ? "直進の基準" : (r.dir > 0 ? "左へ曲がる" : "右へ曲がる");
   char average[96];
@@ -130,15 +138,16 @@ int DebugArcBehavior::priority(const SensorData &sensors, unsigned long nowMs) {
 // ------------------------------ 準備（i・k・l） ------------------------------ //
 
 void DebugArcBehavior::printSetting(const char *prefix) const {
+  char list[48];
+  OuterListText(list, sizeof(list));
   if (outerIndex_ == 0) {
-    Log_Printf("測定", "%s直進の基準（左右とも PWM%d。向きは使わない）。外側の値は l で次へ（基準→%d→%d→%d→%d）",
-               prefix, Motor_SpeedToPwm(CRUISE_SPEED), OUTER_PWMS[0], OUTER_PWMS[1], OUTER_PWMS[2], OUTER_PWMS[3]);
+    Log_Printf("測定", "%s直進の基準（左右とも PWM%d。向きは使わない）。外側の値は l で次へ（%s→最初に戻る）",
+               prefix, Motor_SpeedToPwm(CRUISE_SPEED), list);
   } else {
     int outer = OUTER_PWMS[outerIndex_ - 1];
-    Log_Printf("測定", "%s%sへ曲がる：内側 PWM%d・外側 PWM%d（左PWM%d・右PWM%d）。外側の値は l で次へ（基準→%d→%d→%d→%d）",
+    Log_Printf("測定", "%s%sへ曲がる：内側 PWM%d・外側 PWM%d（左PWM%d・右PWM%d）。外側の値は l で次へ（%s→最初に戻る）",
                prefix, dir_ > 0 ? "左" : "右", ARC_INNER_PWM, outer,
-               dir_ > 0 ? ARC_INNER_PWM : outer, dir_ > 0 ? outer : ARC_INNER_PWM,
-               OUTER_PWMS[0], OUTER_PWMS[1], OUTER_PWMS[2], OUTER_PWMS[3]);
+               dir_ > 0 ? ARC_INNER_PWM : outer, dir_ > 0 ? outer : ARC_INNER_PWM, list);
   }
   Log_Printf("測定", "  差動の前進 %.1f秒（直進 %.1f秒のあと）。準備ができました。ケーブルを抜き、前 1.5m 以上の先に壁（速さの記録用）・曲がる向きと反対側の壁から 15〜20cm にして、リモコンの ▶ で始めます",
              (outerIndex_ == 0 ? ARC_BASELINE_RUN_MS : ARC_RUN_MS) / 1000.0f, ARC_LEAD_MS / 1000.0f);
