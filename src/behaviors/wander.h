@@ -103,6 +103,8 @@ class WanderBehavior : public Behavior {
   unsigned long runMs_ = 0;        // この回の巡航時間（ランダム）
   bool lifted_ = false;            // 持ち上げられている間は状態を進めない
   bool cruiseResume_ = false;      // ID27 のあと、止まらずに巡航へ戻る
+  unsigned long keptMs_ = 0;       // この歩きで、時間切れのあと続けた巡航の時間の合計
+  bool afterKeep_ = false;         // 時間切れで巡航を続けたあと、まだ次の時間切れが来ていない（続けた直後に交代されたかを数える）
 };
 
 #endif // NOVA_BEHAVIORS_WANDER_H

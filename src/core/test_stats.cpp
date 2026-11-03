@@ -33,6 +33,9 @@ struct TestRecord {
   uint16_t stuckEscapedB;       // ID26：信号B の回で、同上
   uint16_t stuckRepeat;         // ID26：くり返し詰まった回数
   uint32_t stuckUnchangedMaxMs; // ID26：見回しが「同じ」が続いた最長の時間
+  uint16_t runKept;             // ID25 v2：巡航の時間が切れたが、通路が空いていて続けた回数
+  uint16_t runTimedStop;        // ID25 v2：巡航の時間が切れて止まった回数
+  uint16_t keptThenNotice;      // ID25 v2：続けたあと、次の時間切れの前に ID9 が止めた回数（記録のみ）
   uint16_t walkCount;           // ID25：歩き出した回数（加速を始めた回数。途中で止められた回も1回）
   uint32_t forwardMs;           // 前進の速度が出ていた時間の合計
   uint32_t loopCount;           // loop の回数（記録中）
@@ -409,6 +412,18 @@ void TestStats_RecordSteerChained(void) {
   if (recording) current.steerChained++;
 }
 
+void TestStats_RecordRunKept(void) {
+  if (recording) current.runKept++;
+}
+
+void TestStats_RecordRunTimedStop(void) {
+  if (recording) current.runTimedStop++;
+}
+
+void TestStats_RecordKeptThenNotice(void) {
+  if (recording) current.keptThenNotice++;
+}
+
 void TestStats_RecordSteerAccelMiss(void) {
   if (recording) current.steerAccelMiss++;
 }
@@ -537,6 +552,8 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              slot, r.steerLeft, r.steerRight, r.steerCleared, r.steerStopped, r.steerInterrupted, r.steerChained, r.steerAccelMiss,
              r.steerNextCount > 0 ? r.steerNextSumMs / 1000.0f / r.steerNextCount : 0.0f, r.steerNextMinMs / 1000.0f, r.steerNextCount,
              r.forwardMs > 0 ? r.stopCount * 1000.0f / r.forwardMs : 0.0f);
+  Log_Printf("試験", "[%d]  ID25 v2：巡航の時間切れ 続けた %u回／止まった %u回（続けたあとに ID9 が止めた %u回。記録のみ）",
+             slot, r.runKept, r.runTimedStop, r.keptThenNotice);
   Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回・約 %lu回/秒。%dms 超 %lu回・%dms 超 %lu回）",
              slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
              (unsigned long)r.loopCount, elapsedMs > 0 ? (unsigned long)(r.loopCount * 1000.0f / elapsedMs) : 0UL,

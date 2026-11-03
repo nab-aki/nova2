@@ -341,6 +341,7 @@
 #define WANDER_AVOID_PIVOT_MS       1200    // 横を避けるための片側旋回の時間（うちキック MOTOR_PIVOT_KICK_MS 300ms。約20°。一旦の決定値）
 #define WANDER_RUN_MIN_MS           1000    // 巡航を保つ時間（ランダムの下限）
 #define WANDER_RUN_MAX_MS           3000    // 同（上限）
+#define WANDER_KEEP_CLEAR_MM        900     // 【仮】ID25 v2：巡航の時間が切れたとき、通路の最も近い物がこれ以上なら止まらずに続ける（停止距離 380 + 最短の巡航 1.0秒で縮む最大 310 + 余裕。25_wander.md）
 
 // ------------------------ ID15 障害物で困る ------------------------ //
 #define TROUBLE_BACK_SPEED          (-CRUISE_SPEED)  // 後退の速度（巡航と同じ速さで逆向き）

@@ -7,6 +7,7 @@
 #include "../core/safety.h"
 #include "../core/stuck_watch.h"
 #include "../core/test_stats.h"
+#include "../core/tof_view.h"
 #include "../core/trace.h"
 #include "../core/turn_tuning.h"
 #include "../hal/hal_log.h"
@@ -68,6 +69,7 @@ void WanderBehavior::onStart(unsigned long nowMs) {
   bool resume = cruiseResume_ && Motion_GetTarget() >= MOTOR_SPEED_EPSILON && Motion_GetSpeed() >= MOTOR_SPEED_EPSILON;
   cruiseResume_ = false;
   if (resume) {
+    keptMs_ = 0;
     runMs_ = (unsigned long)random(WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS + 1);
     StuckWatch_OnCruiseStart();   // 向きが変わったので、信号A は測り直す
     ChangeState(STATE_CRUISE, nowMs);
@@ -103,6 +105,11 @@ void WanderBehavior::onStop(unsigned long nowMs) {
                nowMs - stateStartMs_, Pause_IsPaused() ? "一時停止のため" : "ほかの振る舞いに");
     TestStats_RecordRecoverInterrupted();
   }
+  // 時間切れで巡航を続けたあと、次の時間切れの前に ID9 が止めた回数（記録のみ。合否には使わない）
+  if (state_ == STATE_CRUISE && afterKeep_ && Obstacle_IsBlocked()) {
+    TestStats_RecordKeptThenNotice();
+  }
+  afterKeep_ = false;
   // 交代したら詰まりの数えをやり直す（ID9・ID15・一時停止・ID26 のどれもここを通る）。
   // ID26 に交代するときは、気づいた内容を ID26 が受け取るので残す。一時停止なら捨てる
   StuckWatch_Reset(Pause_IsPaused());
@@ -423,6 +430,7 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
         Log_Printf("うろうろ", "前進 %lums（%d〜%dms から）",
                    runMs_, WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS);
       }
+      keptMs_ = 0;
       Motion_SetSpeed(CRUISE_SPEED, MOTION_ACCEL_MS, nowMs);
       TestStats_RecordWalk();
       ChangeState(STATE_ACCEL, nowMs);
@@ -438,7 +446,36 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
     case STATE_CRUISE:
       StuckWatch_OnCruiseSample(sensors, nowMs);   // ID26 の信号A（気づいたら次のループで交代する）
       if (nowMs - stateStartMs_ >= runMs_) {
-        StuckWatch_OnWalked(nowMs - stateStartMs_);
+        // v2：通路が十分に空いていれば、止まらずに巡航を続けて時間を引き直す（詰まりの疑いのときは続けない）
+#if TOF_ENABLE
+        TofViewResult keep;
+        keep.state = TOF_VIEW_NEAR;
+        keep.cm = -1.0f;
+        keep.valid = 0;
+        bool canKeep = !StuckWatch_WantShortRun() && TofView_CanDrive() && !TofView_IsBlocked();
+        if (canKeep) {
+          TofView_EvaluateFront(WANDER_KEEP_CLEAR_MM, &keep);
+          canKeep = (keep.state == TOF_VIEW_CLEAR || keep.state == TOF_VIEW_FAR_CLEAR);
+        }
+        if (canKeep) {
+          unsigned long ranMs = nowMs - stateStartMs_;
+          keptMs_ += ranMs;        // 詰まりの数えには、続けた分もあわせた歩いた時間を渡す
+          runMs_ = (unsigned long)random(WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS + 1);
+          stateStartMs_ = nowMs;   // 速度は変えずに、巡航の時間だけ引き直す
+          afterKeep_ = true;
+          TestStats_RecordRunKept();
+          Log_Printf("うろうろ", "巡航の時間切れ（%lums）。通路が空いている（%s・%.0fmm、基準 %dmm 以上）ので止まらず続けます（次は %lums）",
+                     ranMs, TofLook_StateName(keep.state), keep.cm * 10.0f, WANDER_KEEP_CLEAR_MM, runMs_);
+          return;
+        }
+        Log_Printf("うろうろ", "巡航の時間切れ。止まります（%s）",
+                   StuckWatch_WantShortRun() ? "詰まりの疑い" :
+                   !TofView_CanDrive() ? "ToF が使えない" :
+                   TofView_IsBlocked() ? "通路に物がある" : TofLook_StateName(keep.state));
+#endif
+        afterKeep_ = false;
+        StuckWatch_OnWalked(keptMs_ + (nowMs - stateStartMs_));
+        TestStats_RecordRunTimedStop();
         Motion_Stop(nowMs);
         ChangeState(STATE_DECEL, nowMs);
       }

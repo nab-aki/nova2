@@ -80,6 +80,9 @@ void TestStats_RecordSteerStart(bool toLeft);       // 曲がり始めた。toLe
 void TestStats_RecordSteerCleared(void);            // よけきれた（曲がり終えてから STEER_CLEARED_MS 止まらなかった）
 void TestStats_RecordSteerInterrupted(void);        // 曲がっている途中で交代した
 void TestStats_RecordSteerChained(void);            // 結果が決まる前に、また曲がった
+void TestStats_RecordRunKept(void);                 // ID25 v2：巡航の時間が切れたが、通路が空いていて続けた
+void TestStats_RecordRunTimedStop(void);            // ID25 v2：巡航の時間が切れて止まった
+void TestStats_RecordKeptThenNotice(void);          // ID25 v2：続けたあと、次の時間切れの前に ID9 が止めた（記録のみ）
 void TestStats_RecordSteerAccelMiss(void);          // 加速中にきっかけを満たしたが、巡航ではないので曲がらなかった
 // 曲がり終えたあと、止まった。msSinceEnd：曲がり終えてからの時間。withinWindow：STEER_CLEARED_MS より前か
 void TestStats_RecordSteerNextStop(unsigned long msSinceEnd, bool withinWindow);
