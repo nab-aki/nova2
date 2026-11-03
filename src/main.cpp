@@ -17,6 +17,7 @@
 #include <Arduino.h>
 
 #include "behaviors/blink.h"
+#include "behaviors/debug_arc.h"
 #include "behaviors/debug_gyro_spin.h"
 #include "behaviors/debug_scan.h"
 #include "behaviors/debug_turn.h"
@@ -26,6 +27,7 @@
 #include "behaviors/stuck.h"
 #include "behaviors/stuck_eyes.h"
 #include "behaviors/trouble.h"
+#include "behaviors/steer_avoid.h"
 #include "behaviors/wander.h"
 #include "config.h"
 #include "core/arbiter.h"
@@ -50,9 +52,11 @@ static BlinkBehavior blinkBehavior;
 static NoticeBehavior noticeBehavior;
 static NoticeEyesBehavior noticeEyesBehavior(&noticeBehavior);
 static WanderBehavior wanderBehavior;
+static SteerAvoidBehavior steerAvoidBehavior(&wanderBehavior);
 static TroubleBehavior troubleBehavior(&noticeBehavior);
 static DebugTurnBehavior debugTurnBehavior;
 static DebugGyroSpinBehavior debugGyroSpinBehavior;
+static DebugArcBehavior debugArcBehavior;
 static DebugScanBehavior debugScanBehavior;
 static PauseCueBehavior pauseCueBehavior;
 static StuckBehavior stuckBehavior;
@@ -144,6 +148,7 @@ static unsigned long ContTurnMs(void) {
   return (unsigned long)(DEBUG_CONT_TURN_DEG * ROTATE_CONT_MS_PER_DEG + 0.5f);
 }
 
+
 static void PrintKeyHelp(void) {
   Log_Printf("キー", "3:その場回転 左  4:その場回転 右（各 %d°。ジャイロの角度で止める。使えないとき・上限は %dms）",
              DEBUG_STEP_TURN_DEG, TurnTuning_StepMs(TURN_ROTATE_LEFT));
@@ -161,6 +166,10 @@ static void PrintKeyHelp(void) {
              DEBUG_SCAN_COUNT);
   Log_Printf("キー", "u:見回しの試験の、1つ目の指示（左）と同時に上下も動かす版（正面 → 左 → 右。servo2 %d°→%d°。上下の動きはジャイロで記録）",
              SERVO2_LEVEL_DEG, DEBUG_SCAN_TILT_DEG);
+  char arcList[48];
+  DebugArcBehavior::OuterListText(arcList, sizeof(arcList));
+  Log_Printf("キー", "曲がり測定（ID27）：一時停止中に i:左へ曲がる  k:右へ曲がる  l:外側の値を次へ（%s→最初に戻る）  9:内側を次へ（PWM%d→0(フリー)→ブレーキ→最初に戻る。起動時は PWM%d）で準備 → ケーブルを抜いて リモコンの ▶ で始める（準備があるときだけ。中断はどのキーか ▶）。結果は t",
+             arcList, ARC_INNER_PWM, ARC_INNER_PWM);
   Log_Printf("キー", "y:ToF の最新の1枚を表で出す（t に ToF の数・影の比較・床の値の分布も出ます。loop の周期と ToF の数は試験の集計に保存されます）");
   Log_Printf("キー", "c:超音波と ToF が食い違った回の 8×8 の表を出す（t には1回2行のまとめが出ます）");
   Log_Printf("キー", "b:%dms の間、ToF の1枚を届けない（途切れで止まる試験。床の上で、歩き出してから押す）", TOF_DEBUG_HOLD_MS);
@@ -336,6 +345,9 @@ static bool IsTuneKey(char c) {
 // 一時停止と再開を切り替え、目で合図する（キー p とリモコンの ▶ の共通の入口）
 static void TogglePause(const char *source, unsigned long nowMs) {
   bool paused = Pause_Toggle(source);
+  if (!paused) {
+    debugArcBehavior.cancelPrepare();   // 再開したら、曲がり測定の準備は取り消す（▶ を測定の開始に使うのは一時停止中だけ）
+  }
   pauseCueBehavior.trigger(paused);
   TestStats_OnPauseToggle(paused, nowMs);
 }
@@ -346,6 +358,45 @@ static void PrintBusStats(void) {
   Log_Printf("I2C", "ライントラッキングが読めずに止めた回数：%lu回（%d回続けて読めないと止める。持ち上げとは別に数える）%s",
              (unsigned long)Safety_TrackLostCount(), SAFETY_TRACK_FAIL_COUNT,
              Safety_IsTrackLost() ? "【いま止めています】" : "");
+}
+
+// 曲がり測定（ID27 段階1）の準備。i＝左・k＝右・l＝外側の値を次へ。一時停止中で、止まっているときだけ受け付ける
+enum ArcKey { ARC_KEY_LEFT, ARC_KEY_RIGHT, ARC_KEY_OUTER, ARC_KEY_INNER };
+
+static void PrepareArc(ArcKey key) {
+  if (!Pause_IsPaused()) {
+    Log_Printf("測定", "一時停止中（p）にしてから押してください");
+    return;
+  }
+  if (!Motion_IsStill()) {
+    Log_Printf("測定", "車体が動いているので無視します（止まってから押してください）");
+    return;
+  }
+  switch (key) {
+    case ARC_KEY_LEFT:  debugArcBehavior.selectLeft();  break;
+    case ARC_KEY_RIGHT: debugArcBehavior.selectRight(); break;
+    case ARC_KEY_OUTER: debugArcBehavior.nextOuter();   break;
+    default:            debugArcBehavior.nextInner();   break;
+  }
+}
+
+// リモコンの ▶：準備した曲がり測定を始める。始められない理由があれば、準備は残して理由を出す
+static void StartArc(void) {
+  if (Safety_IsLifted()) {
+    Log_Printf("測定", "%s", Safety_IsTofStopped() ? "ToF が使えず止めているので始めません"
+                             : Safety_IsTrackLost() ? "ライントラッキングが読めず止めているので始めません"
+                                                    : "持ち上げられているので始めません（床に置いてから ▶）");
+    return;
+  }
+  if (!Motion_IsStill()) {
+    Log_Printf("測定", "車体が動いているので始めません");
+    return;
+  }
+  if (!Gyro_IsTurnUsable()) {
+    Log_Printf("測定", "ジャイロが使えないので始めません（%s）", Gyro_StateName());
+    return;
+  }
+  debugArcBehavior.request();
 }
 
 static void HandleSerialKeys(void) {
@@ -374,6 +425,13 @@ static void HandleSerialKeys(void) {
       char reason[32];
       snprintf(reason, sizeof(reason), "キー '%c'", c);
       debugGyroSpinBehavior.abort(reason, now);
+      continue;
+    }
+    // 曲がり測定（▶ で開始）の最中も、どのキーでも中断する
+    if (debugArcBehavior.isBusy()) {
+      char reason[32];
+      snprintf(reason, sizeof(reason), "キー '%c'", c);
+      debugArcBehavior.abort(reason, now);
       continue;
     }
     // 見回しの試験（o・i・u）の最中も、どのキーでも中断する
@@ -416,6 +474,10 @@ static void HandleSerialKeys(void) {
         Motion_PrintTurnStats();
         troubleBehavior.printLog();
         TofView_Print();
+        DebugArcBehavior::PrintResults();
+        SteerAvoidBehavior::PrintRecords();
+        Log_Printf("メモリ", "ヒープの残り %lu バイト（起動からの最小 %lu）／loop のスタックの残り %lu バイト", (unsigned long)ESP.getFreeHeap(),
+                   (unsigned long)ESP.getMinFreeHeap(), (unsigned long)uxTaskGetStackHighWaterMark(NULL));
         break;
       case 'y': TofView_PrintFrame(); break;
       case 'c': TofView_PrintMismatchFrames(); break;
@@ -424,6 +486,10 @@ static void HandleSerialKeys(void) {
       case 'z': RequestGyroCalibration(now); break;
       case 'm': RequestStaticMeasure(now); break;
       case 'n': RequestGyroSpin(); break;
+      case 'i': PrepareArc(ARC_KEY_LEFT); break;
+      case 'k': PrepareArc(ARC_KEY_RIGHT); break;
+      case 'l': PrepareArc(ARC_KEY_OUTER); break;
+      case '9': PrepareArc(ARC_KEY_INNER); break;
       case 'o': RequestDebugScan(false); break;
       case 'u': RequestDebugScan(true); break;
       case 'h': TestStats_RequestSave(now); break;
@@ -476,10 +542,12 @@ void setup() {
   // 登録順は同順位のときの優先順。優先度は config.h の PRIORITY_* で決まる
   Arbiter_Register(&debugTurnBehavior);
   Arbiter_Register(&debugGyroSpinBehavior);
+  Arbiter_Register(&debugArcBehavior);
   Arbiter_Register(&debugScanBehavior);
   Arbiter_Register(&troubleBehavior);
   Arbiter_Register(&stuckBehavior);
   Arbiter_Register(&noticeBehavior);
+  Arbiter_Register(&steerAvoidBehavior);
   Arbiter_Register(&wanderBehavior);
   Arbiter_Register(&pauseCueBehavior);
   Arbiter_Register(&stuckEyesBehavior);
@@ -502,8 +570,12 @@ void loop() {
   if (Ir_Poll(&irCode) && irCode == IR_BUTTON_PAUSE) {   // 受信したボタンは hal_ir が1行出す
     if (debugGyroSpinBehavior.isBusy()) {
       debugGyroSpinBehavior.abort("リモコン ▶", now);   // 測定（n）の最中は、一時停止を切り替えずに中断だけする
+    } else if (debugArcBehavior.isBusy()) {
+      debugArcBehavior.abort("リモコン ▶", now);        // 曲がり測定の最中も同じ
     } else if (debugScanBehavior.isBusy()) {
       debugScanBehavior.abort("リモコン ▶");            // 見回しの試験（o・u）も同じ
+    } else if (Pause_IsPaused() && debugArcBehavior.isPrepared()) {
+      StartArc();                                       // 一時停止中に準備した測定があるときだけ、▶ は測定の開始
     } else {
       TogglePause("リモコン ▶", now);
     }

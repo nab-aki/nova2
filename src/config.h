@@ -32,6 +32,7 @@
                                             // 参考値。正規化速度の換算は前後とも MOTOR_PWM_MIN(675) を下限にするが、
                                             // 675 > 650 なので後退も必ず動く（ID15 の後退はこの換算のまま使う）
 #define MOTOR_PWM_LIMIT             2000    // 安全のための上限（tools/pwm_test と同じ）
+#define MOTOR_PWM_BRAKE             32767   // Motor_DrivePwm に渡す特別な値：その側の車輪をブレーキにする（DRV8837 の IN1・IN2 を両方 High。hal_motor.cpp）
 #define MOTOR_SPEED_EPSILON         0.01f   // 正規化速度（-1〜1）がこれ未満なら停止として扱う
 
 // その場回転・片側旋回（ID25）は、4輪の横滑りのため動き出しに大きな力が要る。ただし回り出せば下げても回り続ける。
@@ -127,6 +128,9 @@
 #define TOF_US_MATCH_MS             1000    // 超音波と ToF の「あり」を同じ物とみなす時間の幅（比較の記録だけ）
 #define TOF_MISMATCH_RECORDS        16      // 超音波と ToF が食い違った回の記録の数（直近）
 #define TOF_MISMATCH_FOLLOW         3       // 食い違った回の、あとに続く枚の記録の数
+#define TOF_MISMATCH_PRE_MS         3000    // 食い違った回に残す、「あり」になる前の枚の長さ（端の列 c0〜c1・c6〜c7 と中央の列 c3〜c4 の上の段の距離、止まっていた枚か、を1枚ごとに残す）
+#define TOF_MISMATCH_PRE_FRAMES     (TOF_MISMATCH_PRE_MS / TOF_FRAME_MS + 2)   // 同じく、枚数の上限
+#define TOF_EDGE_COLS               2       // 端の列の数（左は c0〜、右は c7 から内側へ）
 
 // 床のマス（r5〜r7）の値の分布を、床の想定距離との比で記録する（しきい値は段0 の記録で決める）
 #define TOF_FLOOR_RATIO             0.80f   // 【仮】床の想定距離のこの割合より近ければ床ではない（走行中の r6・r7 の谷。段1 の記録）
@@ -257,6 +261,7 @@
 // 車体：デバッグ回転 > 困る > うろうろの後退+その場回転 > 気づく > うろうろ（安全 > 立て直し > 張りつき対策 > 反応 > 気まま）。
 // 数値の基準は docs/decisions.md に積み上げる。
 #define PRIORITY_WANDER             20      // 車体：ID25 うろうろ（既定の振る舞い）
+#define PRIORITY_STEER_AVOID        25      // 車体：ID27 進みながらよける（うろうろより上、気づくより下。止まる判断が必ず勝つ）
 #define PRIORITY_NOTICE             30      // 車体：ID9 気づく（20 から変更）
 #define PRIORITY_WANDER_RECOVER     35      // 車体：ID25 の後退+その場回転（横がとても近いときの張りつき対策）。
                                             // ID15 の立て直しと同じく、気づく（30）に割り込まれず最後までやり切る
@@ -451,6 +456,48 @@
 #define GYRO_SPIN_RAMP_MS           300     // n キー：前進の加速・減速にかける時間
 #define GYRO_SPIN_GAP_MS            500     // n キー：前進を止めてから、その場回転を始めるまでの「ため」
 #define PRIORITY_DEBUG_GYRO_SPIN    50      // 車体：n キーの測定（デバッグ回転と同じ。同時には受け付けない）
+
+// 曲がり測定（ID27 段階1「曲がれる力を測る」。behaviors/debug_arc.*）
+// i・k・l で準備（向きと外側の値）、一時停止中にリモコンの ▶ で始める。内側の車輪は ARC_INNER_PWM、外側を ARC_OUTER_PWM_LIST の値にして前進し、ジャイロで曲がる速さを測る。
+// 測定中も ToF で止める判断と持ち上げで止める安全層は働く。合否の線は決めていない（40°/秒・12cm・12° は【仮】の参考値。根拠は未確認。catalog.md）。測定の壁は通路の先 1.5m 以上に置く（速さの記録のため）
+#define PRIORITY_DEBUG_ARC          50      // 車体：曲がり測定（デバッグ回転と同じ。同時には受け付けない）
+// ID27 進みながらよける（docs/specs/27_steer_avoid.md）
+#define STEER_TRIGGER_MM            700     // 【仮】これより近い端の列の物でよける（止まる距離 380mm＋曲がる間に進む約 30cm）
+#define STEER_OUTER_PWM             1000    // 【仮】外側の車輪。段階1 の出発点
+#define STEER_INNER_PWM             0       // 内側の車輪。フリー（ブレーキは次の候補。今は使わない）
+#define STEER_MAX_DEG               30.0f   // 【仮】曲がる角度の上限
+#define STEER_MAX_MS                1600    // 【仮】曲がる時間の上限（フリーで 30° に約 1.25秒）
+#define STEER_OPPOSITE_CLEAR_MM     600     // 【仮】反対側の端の列の最も近い物がこれより遠いときだけ曲がる
+#define STEER_SIDE_MAX_MM           200     // 【仮】車体の中心からの横の位置がこれ以内の物だけ見る
+#define STEER_EDGE_LEAD_MM          50      // 【仮】端の列が中央の列（c3〜c4）よりこれ以上近いときだけ使う
+#define STEER_NEAR_FRAMES           2       // 【仮】続けて写る枚数
+#define STEER_SHRINK_WINDOW_MS      200     // 【仮】縮みを見る時間
+#define STEER_SHRINK_MM             20      // 【仮】この時間に縮む距離
+#define STEER_SHRINK_SLACK_MS       60      // 枚の周期のばらつき（実測の周期 99〜106ms）。これより外れたら枚が抜けたとみなす
+#define STEER_HISTORY               (STEER_SHRINK_WINDOW_MS / TOF_FRAME_MS + 1)   // 覚えておく枚数（0.2秒の縮みには3枚）
+#define STEER_COOLDOWN_MS           1000    // 【仮】続けて曲がらない時間
+#define STEER_CLEARED_MS            2000    // 【仮】曲がり終えてからこの間止まらなければ「よけきれた」
+#define STEER_RECORD_COUNT          18      // 曲がった回ごとの記録の数（直近。RAM。t で見る）
+
+#define ARC_LEAD_MS                 800     // 直進の長さ（加速 ARC_LEAD_ACCEL_MS＋巡航）。この間は左右同じ出力。加速が終わるかは速さの記録を見て決める
+#define ARC_LEAD_ACCEL_MS           300     // 直進の加速時間（0 から巡航まで。通常は MOTION_ACCEL_MS＝1600ms）
+#define ARC_RUN_MS                  1500    // 差動の前進の長さ
+#define ARC_BASELINE_RUN_MS         1500    // 直進の基準（左右とも巡航の PWM）の長さ
+#define ARC_SKIP_MS                 700     // 差動の前進の最初に、集計から外す時間（回り始め）
+#define ARC_PARTIAL_MIN_MS          400     // ToF などで途中で止まったとき、集計の時間がこれ以上なら、それまでの平均を出す
+#define ARC_STEP_MS                 100     // 曲がる速さを出す刻み
+#define ARC_INNER_PWM               MOTOR_PWM_MIN   // 内側の車輪の起動時の値（キー 9 で切り替える）
+#define ARC_INNER_COUNT             3       // 内側の選び方の数
+#define ARC_INNER_LIST              {ARC_INNER_PWM, 0, MOTOR_PWM_BRAKE}   // 675 → 0（フリー）→ ブレーキ → 最初に戻る
+#define ARC_OUTER_PWM_COUNT         3       // 外側の値の数（先頭の「直進の基準」は別）
+#define ARC_OUTER_PWM_LIST          {800, 900, 1000}
+#define ARC_PREP_TIMEOUT_MS         3000    // 首が走行姿勢で安定し、判定が決まるまで待つ上限
+#define ARC_START_DELAY_MS          500     // ▶ を押してから動き出すまでの「ため」（首が動いていても最低これだけ待つ）
+#define ARC_RESULT_COUNT            8       // 結果を残す件数（電源を切るまで RAM。t で見る）
+#define ARC_MAX_STEPS               (ARC_RUN_MS / ARC_STEP_MS + 2)   // 0.1秒刻みの記録の最大数
+#define ARC_ANGLE_COUNT             3       // 差動の前進の始めから何度向きを変えたかを出す時点の数
+#define ARC_ANGLE_LIST_MS           {300, 500, 1000}   // その時点（差動の前進の始まりから）
+#define ARC_SPEED_MAX               ((ARC_LEAD_MS + ARC_RUN_MS) / TOF_FRAME_MS + 6)   // 前に進む速さ（ToF 中央の列の距離の減り方）の記録の最大数
 
 // ------------------------ 試験の集計（共通部品。NVS保存）------------------------ //
 // 「1回の試験」＝再開してから一時停止するまで（起動時に一時停止でなければ起動から）。

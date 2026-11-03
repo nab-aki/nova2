@@ -16,7 +16,10 @@ void Motor_Drive(float left, float right);
 // （最低PWMの下限を通さないので、呼ぶ側が動く値を渡すこと）。
 void Motor_DrivePwm(int leftPwm, int rightPwm);
 
-// 全輪を止める
+// 左右どちらかに MOTOR_PWM_BRAKE（config.h）を渡すと、その側（2輪）はブレーキ（出力の両端を短絡）になる。
+// ブレーキは Motor_DrivePwm か Motor_Stop で別の値を出せば解ける（PWM 0 はフリー）。
+
+// 全輪を止める（フリー）
 void Motor_Stop(void);
 
 // 正規化速度（-1〜1）をPWM値（符号付き）に換算する（表示・確認用に公開）

@@ -64,6 +64,15 @@ void WanderBehavior::Restart(unsigned long nowMs) {
 }
 
 void WanderBehavior::onStart(unsigned long nowMs) {
+  // ID27 が普通に曲がり終えたら、止まらずに巡航を続ける。間に止める振る舞いが入っていたら、目標が 0 になっているので通常どおり
+  bool resume = cruiseResume_ && Motion_GetTarget() >= MOTOR_SPEED_EPSILON && Motion_GetSpeed() >= MOTOR_SPEED_EPSILON;
+  cruiseResume_ = false;
+  if (resume) {
+    runMs_ = (unsigned long)random(WANDER_RUN_MIN_MS, WANDER_RUN_MAX_MS + 1);
+    StuckWatch_OnCruiseStart();   // 向きが変わったので、信号A は測り直す
+    ChangeState(STATE_CRUISE, nowMs);
+    return;
+  }
   // 一時停止から再開したときは、見えていないの数えもやり直す
   if (givenUp_) {
     givenUp_ = false;

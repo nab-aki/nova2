@@ -75,6 +75,15 @@ void TestStats_RecordBlindStop(void);       // 前進中に見えていない状
 void TestStats_RecordNeckLook(bool onsetSeen);   // 首を振って見た。onsetSeen が false なら「動かなかった疑い」
 void TestStats_RecordStopGap(int gapMm, int sideMm);   // 止まったあとの前端の隙間と横の余裕。なければ負
 
+// ID27（docs/specs/27_steer_avoid.md）
+void TestStats_RecordSteerStart(bool toLeft);       // 曲がり始めた。toLeft：左へ曲がる
+void TestStats_RecordSteerCleared(void);            // よけきれた（曲がり終えてから STEER_CLEARED_MS 止まらなかった）
+void TestStats_RecordSteerInterrupted(void);        // 曲がっている途中で交代した
+void TestStats_RecordSteerChained(void);            // 結果が決まる前に、また曲がった
+void TestStats_RecordSteerAccelMiss(void);          // 加速中にきっかけを満たしたが、巡航ではないので曲がらなかった
+// 曲がり終えたあと、止まった。msSinceEnd：曲がり終えてからの時間。withinWindow：STEER_CLEARED_MS より前か
+void TestStats_RecordSteerNextStop(unsigned long msSinceEnd, bool withinWindow);
+
 // 安全層：持ち上げを検知した
 void TestStats_RecordLift(void);
 

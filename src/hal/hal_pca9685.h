@@ -12,6 +12,9 @@ void Pca9685_Setup(void);
 // チャンネルにパルス幅（0〜4095）を出力する
 void Pca9685_SetPulseWidth(uint8_t channel, uint16_t pulseWidth);
 
+// チャンネルを「常時 ON」にする（LEDn_ON_H の bit4＝full ON を 1、LEDn_OFF_H の bit4＝full OFF を 0。データシート 7.3.3）
+void Pca9685_SetFullOn(uint8_t channel);
+
 // チャンネルの ON・OFF の値（LEDn_ON・LEDn_OFF。各16ビット）を IC から読み戻す。デバッグ用（見回しの試験）。
 // 読めなければ false。Pca9685_SetPulseWidth(ch, w) で書いたあとは、ON＝0・OFF＝w が読めるはず（0 < w < 4095 のとき）
 bool Pca9685_ReadOnOff(uint8_t channel, uint16_t *onTime, uint16_t *offTime);

@@ -46,6 +46,13 @@ bool Motion_IsStill(void);
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs);
 void Motion_StopTurn(unsigned long nowMs);
 
+// 曲がり測定（ID27 段階1。behaviors/debug_arc.*）。前進のまま、左右の PWM に差をつけて出す。
+// 回転ではなく前進として扱う（ToF の判定が止まらず、安全層も「前進中」として止める）。
+// 速度の目標は巡航のまま（なめらか化の値も巡航にそろえる）。揺らぎは重ねない。
+// 直進・停止の指示（Motion_SetSpeed／Motion_Stop）・回転・非常停止で取り消される。
+void Motion_StartArc(int leftPwm, int rightPwm, unsigned long nowMs);
+bool Motion_IsArcing(void);
+
 // 角度を指示して回る（docs/specs/common_gyro_turn.md）。止めるのは motion が行う。呼ぶ側は Motion_IsTurning() が false になるのを待つ。
 //   ・ジャイロが使えるとき：回った角度が「targetDeg − GYRO_TURN_COAST_DEG」に届いたら止める。
 //     回っていない（GYRO_TURN_STALL_MS で GYRO_TURN_STALL_DEG 未満）・limitMs がたった・途中でジャイロを失った、でも止める。

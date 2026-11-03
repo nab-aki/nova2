@@ -11,6 +11,11 @@
 static Smoother speedSmoother(0.0f);
 static unsigned long lastUpdateMs = 0;
 
+// 曲がり測定の差動の前進（Motion_StartArc）。回転ではなく前進として扱う
+static bool arcActive = false;
+static int arcLeftPwm = 0;
+static int arcRightPwm = 0;
+
 // 回転（その場回転・片側旋回）。直進とは同時に使わない
 static bool turning = false;
 static TurnKind turnKind = TURN_ROTATE_LEFT;
@@ -122,13 +127,35 @@ static void CancelTurn(unsigned long nowMs, const char *reason) {
   }
 }
 
+// 差動の前進を終える。内側がブレーキのまま残らないように、ブレーキの側はすぐ PWM 0（フリー）に戻す
+static void EndArc(void) {
+  if (!arcActive) {
+    return;
+  }
+  arcActive = false;
+  if (arcLeftPwm == MOTOR_PWM_BRAKE || arcRightPwm == MOTOR_PWM_BRAKE) {
+    Motor_DrivePwm(arcLeftPwm == MOTOR_PWM_BRAKE ? 0 : arcLeftPwm, arcRightPwm == MOTOR_PWM_BRAKE ? 0 : arcRightPwm);
+  }
+}
+
+static const char *ArcWheelText(int pwm, char *buffer, size_t size) {
+  if (pwm == MOTOR_PWM_BRAKE) {
+    snprintf(buffer, size, "ブレーキ");
+  } else {
+    snprintf(buffer, size, "%d", pwm);
+  }
+  return buffer;
+}
+
 void Motion_Setup(void) {
   speedSmoother.reset(0.0f);
   turning = false;
+  arcActive = false;
   Motor_Stop();
 }
 
 void Motion_SetSpeed(float target, unsigned long rampMs, unsigned long nowMs) {
+  EndArc();   // 差動の前進は、直進の指示で取り消す（出力は直進に戻る。ブレーキは解く）
   if (turning) {
     turnCanceledValid = true;
     turnCanceledMs = nowMs;
@@ -148,6 +175,7 @@ void Motion_Stop(unsigned long nowMs) {
 void Motion_EmergencyStop(void) {
   bool wasTurning = turning;
   turning = false;          // 回転中でも確実に止める（記録は下の1行にまとめる）
+  arcActive = false;        // 下の Motor_Stop が、ブレーキも含めて PWM 0（フリー）にする
   speedSmoother.reset(0.0f);
   Motor_Stop();
   NoteTurnAborted();
@@ -157,7 +185,25 @@ void Motion_EmergencyStop(void) {
   Log_Printf("動き", "非常停止");
 }
 
+void Motion_StartArc(int leftPwm, int rightPwm, unsigned long nowMs) {
+  (void)nowMs;
+  arcActive = true;
+  arcLeftPwm = leftPwm;
+  arcRightPwm = rightPwm;
+  speedSmoother.reset(CRUISE_SPEED);   // 前進中として扱う（ToF の判定・安全層が見る速度）
+  Motor_DrivePwm(arcLeftPwm, arcRightPwm);
+  char left[16];
+  char right[16];
+  Log_Printf("動き", "差動の前進 左PWM%s・右PWM%s", ArcWheelText(arcLeftPwm, left, sizeof(left)),
+             ArcWheelText(arcRightPwm, right, sizeof(right)));
+}
+
+bool Motion_IsArcing(void) {
+  return arcActive;
+}
+
 void Motion_StartTurn(TurnKind kind, unsigned long nowMs) {
+  EndArc();   // 回転の出力（ApplyTurn）が左右とも上書きする。ブレーキは先に解く
   NoteTurnAborted();           // 前の回転が残っていたら中断として数え、止め方を「呼ぶ側が止める」に戻す
   speedSmoother.reset(0.0f);   // 直進の目標は捨てる
   turning = true;
@@ -314,6 +360,10 @@ void Motion_Update(unsigned long nowMs) {
   }
   lastUpdateMs = nowMs;
 
+  if (arcActive) {
+    Motor_DrivePwm(arcLeftPwm, arcRightPwm);   // 差動の前進は、なめらか化も揺らぎも通さない
+    return;
+  }
   speedSmoother.update(nowMs);
   float speed = speedSmoother.value();
   float output = speed + Wobble(nowMs, speed);
