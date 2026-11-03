@@ -61,4 +61,7 @@ class SteerAvoidBehavior : public Behavior {
   bool accelMissCounted_ = false;   // この加速の間に、見送りを数えた
 };
 
+// 最後に曲がり終えた時刻（起動から）。まだ一度も曲がり終えていなければ false
+bool SteerAvoid_LastEndMs(unsigned long *ms);
+
 #endif // NOVA_BEHAVIORS_STEER_AVOID_H

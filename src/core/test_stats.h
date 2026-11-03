@@ -81,7 +81,17 @@ void TestStats_RecordSteerCleared(void);            // よけきれた（曲が�
 void TestStats_RecordSteerInterrupted(void);        // 曲がっている途中で交代した
 void TestStats_RecordSteerChained(void);            // 結果が決まる前に、また曲がった
 void TestStats_RecordRunKept(void);                 // ID25 v2：巡航の時間が切れたが、通路が空いていて続けた
-void TestStats_RecordRunTimedStop(void);            // ID25 v2：巡航の時間が切れて止まった
+// ID25 v2：巡航の時間が切れて止まった理由（続ける条件のうち、確かめる順に最初に満たさなかったもの）
+enum RunStopReason {
+  RUN_STOP_STUCK = 0,   // 詰まりの疑い
+  RUN_STOP_TOF,         // ToF が使えない（測距中でない・枚が古い）
+  RUN_STOP_BLOCKED,     // 判定が「あり」
+  RUN_STOP_NEAR,        // 通路の最も近い物が WANDER_KEEP_CLEAR_MM 未満
+  RUN_STOP_BLIND,       // 見えていない
+  RUN_STOP_REASONS
+};
+// ID25 v2：巡航の時間が切れて止まった。nearMm：「近い」のときの通路の最も近い距離（それ以外は負）
+void TestStats_RecordRunTimedStop(RunStopReason reason, int nearMm);
 void TestStats_RecordKeptThenNotice(void);          // ID25 v2：続けたあと、次の時間切れの前に ID9 が止めた（記録のみ）
 void TestStats_RecordSteerAccelMiss(void);          // 加速中にきっかけを満たしたが、巡航ではないので曲がらなかった
 // 曲がり終えたあと、止まった。msSinceEnd：曲がり終えてからの時間。withinWindow：STEER_CLEARED_MS より前か

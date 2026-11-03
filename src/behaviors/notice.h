@@ -35,6 +35,9 @@ class NoticeBehavior : public Behavior {
 
   int stopCount() const { return stopCount_; }
 
+  // t キー：停止ごとの記録（直近 NOTICE_STOP_RECORDS 回）と、前端の隙間が最小の回を出す
+  static void PrintRecords();
+
  private:
   enum State {
     STATE_IDLE,      // 何もしていない（ID25 が動いている）
@@ -43,6 +46,7 @@ class NoticeBehavior : public Behavior {
 
   void EnterNoticed(unsigned long nowMs);
   void ReportStop(unsigned long nowMs);
+  void CaptureStop(unsigned long nowMs);
 
   State state_ = STATE_IDLE;
   unsigned long noticedAtMs_ = 0;

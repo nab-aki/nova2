@@ -36,6 +36,9 @@ struct TestRecord {
   uint16_t runKept;             // ID25 v2：巡航の時間が切れたが、通路が空いていて続けた回数
   uint16_t runTimedStop;        // ID25 v2：巡航の時間が切れて止まった回数
   uint16_t keptThenNotice;      // ID25 v2：続けたあと、次の時間切れの前に ID9 が止めた回数（記録のみ）
+  uint16_t runStopReason[RUN_STOP_REASONS];  // ID25 v2：時間が切れて止まった理由ごとの回数（RunStopReason の順）
+  int16_t runStopNearMinMm;     // ID25 v2：「近い」で止まったときの通路の最も近い距離の最小。なければ負
+  int16_t runStopNearMaxMm;     // 同じく最大
   uint16_t walkCount;           // ID25：歩き出した回数（加速を始めた回数。途中で止められた回も1回）
   uint32_t forwardMs;           // 前進の速度が出ていた時間の合計
   uint32_t loopCount;           // loop の回数（記録中）
@@ -86,7 +89,7 @@ struct TestStatsStorage {
   TestRecord ring[3];
 };
 
-#define TEST_STATS_MAGIC  0x54534E36u  // "TSN6"（ID27 の項目を足した）
+#define TEST_STATS_MAGIC  0x54534E37u  // "TSN7"（ID25 v2 の項目を足した）。記録の構造を変えたら必ず変える
 
 static TestStatsStorage storage;
 static TestRecord current;            // 記録中（または保存待ち）の枠の、生きた値
@@ -122,6 +125,8 @@ static void ResetRecord(TestRecord *r) {
   r->stopDistMinCm = -1.0f;   // まだ値がない
   r->gapMinMm = -1;
   r->sideMinMm = -1;
+  r->runStopNearMinMm = -1;
+  r->runStopNearMaxMm = -1;
 }
 
 // リングを1つ進めて、新しい試験の枠にする
@@ -416,8 +421,18 @@ void TestStats_RecordRunKept(void) {
   if (recording) current.runKept++;
 }
 
-void TestStats_RecordRunTimedStop(void) {
-  if (recording) current.runTimedStop++;
+void TestStats_RecordRunTimedStop(RunStopReason reason, int nearMm) {
+  if (!recording) {
+    return;
+  }
+  current.runTimedStop++;
+  if (reason >= 0 && reason < RUN_STOP_REASONS) {
+    current.runStopReason[reason]++;
+  }
+  if (reason == RUN_STOP_NEAR && nearMm >= 0) {
+    if (current.runStopNearMinMm < 0 || nearMm < current.runStopNearMinMm) current.runStopNearMinMm = (int16_t)nearMm;
+    if (nearMm > current.runStopNearMaxMm) current.runStopNearMaxMm = (int16_t)nearMm;
+  }
 }
 
 void TestStats_RecordKeptThenNotice(void) {
@@ -552,8 +567,11 @@ static void PrintRecord(int slot, const TestRecord &r, unsigned long elapsedMs, 
              slot, r.steerLeft, r.steerRight, r.steerCleared, r.steerStopped, r.steerInterrupted, r.steerChained, r.steerAccelMiss,
              r.steerNextCount > 0 ? r.steerNextSumMs / 1000.0f / r.steerNextCount : 0.0f, r.steerNextMinMs / 1000.0f, r.steerNextCount,
              r.forwardMs > 0 ? r.stopCount * 1000.0f / r.forwardMs : 0.0f);
-  Log_Printf("試験", "[%d]  ID25 v2：巡航の時間切れ 続けた %u回／止まった %u回（続けたあとに ID9 が止めた %u回。記録のみ）",
-             slot, r.runKept, r.runTimedStop, r.keptThenNotice);
+  Log_Printf("試験", "[%d]  ID25 v2：巡航の時間切れ 続けた %u回／止まった %u回（近い %u・あり %u・見えず %u・ToF %u・詰まり %u。近いときの距離 %d〜%dmm）（続けたあとに ID9 が止めた %u回。記録のみ）",
+             slot, r.runKept, r.runTimedStop,
+             r.runStopReason[RUN_STOP_NEAR], r.runStopReason[RUN_STOP_BLOCKED], r.runStopReason[RUN_STOP_BLIND],
+             r.runStopReason[RUN_STOP_TOF], r.runStopReason[RUN_STOP_STUCK],
+             r.runStopNearMinMm, r.runStopNearMaxMm, r.keptThenNotice);
   Log_Printf("試験", "[%d]  loop：周期 平均 %.2fms／最大 %.1fms（%lu回・約 %lu回/秒。%dms 超 %lu回・%dms 超 %lu回）",
              slot, r.loopCount > 0 ? (float)(r.loopSumUs / r.loopCount) / 1000.0f : 0.0f, r.loopMaxUs / 1000.0f,
              (unsigned long)r.loopCount, elapsedMs > 0 ? (unsigned long)(r.loopCount * 1000.0f / elapsedMs) : 0UL,

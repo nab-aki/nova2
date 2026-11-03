@@ -62,8 +62,12 @@ bool TofView_TakeEdgeView(uint32_t *lastSeq, TofEdgeView *out);
 // いまの1枚を、車体の正面の通路で見る
 void TofView_EvaluateFront(int nearMm, TofViewResult *out);
 
-// 気づいて止まったときに呼ぶ。止まったあとの3枚で前端の隙間・横の余裕を記録する
-void TofView_ReportStop(void);
+// 気づいて止まったときに呼ぶ。止まったあとの3枚で前端の隙間・横の余裕を記録する。前端の隙間（mm）を返す。通路の中になければ負
+int TofView_ReportStop(void);
+
+// 前進中に判定した最後の1枚：通路の中の最も近い距離（なければ負）、読み終えた時刻、
+// そのあとに捨てた枚・前進中でなく判定した枚の数。まだなければ false
+bool TofView_LastForwardFrame(int *mm, unsigned long *readyMs, uint16_t *skipped, uint16_t *still);
 
 // 判定を捨てて「不明」に戻す。このあと動きが終わってから取った枚だけで判定し直す
 void TofView_Reset(void);

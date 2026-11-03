@@ -6,6 +6,7 @@
 static Behavior *behaviors[ARBITER_MAX_BEHAVIORS];
 static uint8_t behaviorCount = 0;
 static Behavior *active[LAYER_COUNT] = {NULL, NULL};
+static const char *previousName[LAYER_COUNT] = {"なし", "なし"};   // 直前まで動いていた振る舞い（気づくの記録に使う）
 
 static const char *const LAYER_NAMES[LAYER_COUNT] = {"車体", "目"};
 
@@ -52,6 +53,7 @@ void Arbiter_Update(const SensorData &sensors, unsigned long nowMs) {
       if (active[layer]) {
         active[layer]->onStop(nowMs);
       }
+      previousName[layer] = active[layer] ? active[layer]->name() : "なし";
       active[layer] = best;
       if (best) {
         best->onStart(nowMs);
@@ -66,4 +68,8 @@ void Arbiter_Update(const SensorData &sensors, unsigned long nowMs) {
 
 const char *Arbiter_ActiveName(BehaviorLayer layer) {
   return active[layer] ? active[layer]->name() : "なし";
+}
+
+const char *Arbiter_PreviousName(BehaviorLayer layer) {
+  return previousName[layer];
 }

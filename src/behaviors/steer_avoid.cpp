@@ -67,6 +67,15 @@ static const char *ResultName(uint8_t result) {
   }
 }
 
+// 最後に曲がり終えた時刻（気づくの記録に使う）
+static bool anyEnded = false;
+static unsigned long anyLastEndMs = 0;
+
+bool SteerAvoid_LastEndMs(unsigned long *ms) {
+  *ms = anyLastEndMs;
+  return anyEnded;
+}
+
 void SteerAvoidBehavior::PrintRecords() {
   Log_Printf("よける", "曲がった回ごとの記録（起動から %lu回。直近 %d回まで。新しい順。「きっかけ」の距離が最初に写った距離）：",
              (unsigned long)recordTotal, STEER_RECORD_COUNT);
@@ -270,6 +279,8 @@ void SteerAvoidBehavior::finishArc(const char *reason, unsigned long nowMs) {
   arcing_ = false;
   endedOnce_ = true;
   lastEndMs_ = nowMs;
+  anyEnded = true;
+  anyLastEndMs = nowMs;
   watching_ = true;
   clearPending_ = true;
   historyCount_ = 0;   // 向きが変わったので、縮みは見直す
@@ -308,6 +319,8 @@ void SteerAvoidBehavior::endBySafety(unsigned long nowMs) {
   arcing_ = false;
   endedOnce_ = true;
   lastEndMs_ = nowMs;
+  anyEnded = true;
+  anyLastEndMs = nowMs;
   historyCount_ = 0;
   TestStats_RecordSteerInterrupted();
   SetLatestEnd(angle, nowMs - arcStartMs_, lastSeenMm_);
@@ -324,6 +337,8 @@ void SteerAvoidBehavior::onStop(unsigned long nowMs) {
   arcing_ = false;
   endedOnce_ = true;
   lastEndMs_ = nowMs;
+  anyEnded = true;
+  anyLastEndMs = nowMs;
   historyCount_ = 0;
   TestStats_RecordSteerInterrupted();
   SetLatestEnd((Gyro_YawDeg() - arcStartYaw_) * (armedSide_ == TOF_EDGE_LEFT ? -1.0f : 1.0f), nowMs - arcStartMs_, lastSeenMm_);

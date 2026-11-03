@@ -303,6 +303,7 @@
 #define NOTICE_WIDE_MS              1200    // 気づいたとき目を見開いている時間
 #define NOTICE_HOLD_MS              800     // 障害物がなくなってから、うろうろに戻るまでの間
 #define NOTICE_STOP_REPORT_MS       800     // 気づいてから、停止後の距離をシリアルに出すまでの待ち
+#define NOTICE_STOP_RECORDS         12      // t に出す停止ごとの記録の数（直近）
 #define NOTICE_REACT_MS             1200    // 気づいた反応が終わるまで（この後 ID15 が引き継ぐ）。
                                             // 見開き 1200ms と停止後の報告 800ms の長いほう
 

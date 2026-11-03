@@ -468,14 +468,22 @@ void WanderBehavior::onUpdate(const SensorData &sensors, unsigned long nowMs) {
                      ranMs, TofLook_StateName(keep.state), keep.cm * 10.0f, WANDER_KEEP_CLEAR_MM, runMs_);
           return;
         }
-        Log_Printf("うろうろ", "巡航の時間切れ。止まります（%s）",
-                   StuckWatch_WantShortRun() ? "詰まりの疑い" :
-                   !TofView_CanDrive() ? "ToF が使えない" :
-                   TofView_IsBlocked() ? "通路に物がある" : TofLook_StateName(keep.state));
+        // 止まる理由は、上で確かめた順に最初に満たさなかった条件
+        RunStopReason reason = StuckWatch_WantShortRun() ? RUN_STOP_STUCK :
+                               !TofView_CanDrive() ? RUN_STOP_TOF :
+                               TofView_IsBlocked() ? RUN_STOP_BLOCKED :
+                               keep.state == TOF_VIEW_NEAR ? RUN_STOP_NEAR : RUN_STOP_BLIND;
+        Log_Printf("うろうろ", "巡航の時間切れ。止まります（%s・通路の最も近い %.0fmm）",
+                   reason == RUN_STOP_STUCK ? "詰まりの疑い" :
+                   reason == RUN_STOP_TOF ? "ToF が使えない" :
+                   reason == RUN_STOP_BLOCKED ? "通路に物がある" : TofLook_StateName(keep.state),
+                   keep.cm * 10.0f);
+        TestStats_RecordRunTimedStop(reason, reason == RUN_STOP_NEAR ? (int)(keep.cm * 10.0f) : -1);
+#else
+        TestStats_RecordRunTimedStop(RUN_STOP_TOF, -1);
 #endif
         afterKeep_ = false;
         StuckWatch_OnWalked(keptMs_ + (nowMs - stateStartMs_));
-        TestStats_RecordRunTimedStop();
         Motion_Stop(nowMs);
         ChangeState(STATE_DECEL, nowMs);
       }

@@ -76,6 +76,14 @@ static long leadSumMs = 0;             // 影が超音波より先に「あり�
 static uint32_t leadCount = 0;
 static uint32_t emergencyFrames = 0;   // 通路の中で非常停止の距離より近かった枚数（前進中のほか）
 static uint32_t emergencyFramesForward = 0;   // 同じく、前進中
+static uint32_t emergencyTestFrames = 0;          // 上の2つのうち、試験中で床に置いている間（前進中のほか）
+static uint32_t emergencyTestFramesForward = 0;   // 同じく、前進中
+// 前進中に判定した最後の1枚（気づくの記録に使う）
+static bool lastForwardValid = false;
+static int lastForwardMm = -1;            // その枚の、通路の中の最も近い距離。なければ負
+static unsigned long lastForwardReadyMs = 0;
+static uint16_t skippedSinceForward = 0;  // その枚のあとに捨てた枚
+static uint16_t stillSinceForward = 0;    // その枚のあとに判定した、前進中でない枚
 static uint32_t tooNearZones = 0;      // 状態によらず「近すぎ」としたマスの数
 static uint32_t staleEvents = 0;       // データの途切れの回数
 static uint32_t staleMaxMs = 0;        // 最も長い途切れ
@@ -471,9 +479,9 @@ void TofView_EvaluateFront(int nearMm, TofViewResult *out) {
   TofLook_Evaluate(frame, Servo_GetAngle(SERVO_PAN), 0.0f, nearMm, out);
 }
 
-void TofView_ReportStop(void) {
+int TofView_ReportStop(void) {
   if (gapHistoryCount < GAP_FRAMES) {
-    return;
+    return -1;
   }
   // 3枚とも出ている近さだけを採る（1枚だけの値で小さくしない）。1枚でもなければ「隙間なし」とする
   int gap = gapHistory[0].gapMm;
@@ -493,6 +501,15 @@ void TofView_ReportStop(void) {
   if (side != NO_GAP && (stopSideMinMm == NO_GAP || side < stopSideMinMm)) {
     stopSideMinMm = side;
   }
+  return gap == NO_GAP ? -1 : gap;
+}
+
+bool TofView_LastForwardFrame(int *mm, unsigned long *readyMs, uint16_t *skipped, uint16_t *still) {
+  *mm = lastForwardMm;
+  *readyMs = lastForwardReadyMs;
+  *skipped = skippedSinceForward;
+  *still = stillSinceForward;
+  return lastForwardValid;
 }
 
 // 影の「あり」「超音波のあり」の対応を数える。先に立ったほうが相手を待つ
@@ -565,10 +582,13 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   emergencyNow = scan.emergency;
   tooNearZones += scan.tooNear;
   if (scan.emergency) {
+    bool inTest = TestStats_IsRecording() && !Safety_IsLifted();
     if (movingForward) {
       emergencyFramesForward++;
+      if (inTest) emergencyTestFramesForward++;
     } else {
       emergencyFrames++;
+      if (inTest) emergencyTestFrames++;
     }
   }
   if (shadowOnsetWaiting) {
@@ -580,6 +600,15 @@ static void JudgeFrame(bool movingForward, unsigned long nowMs) {
   nearestMm = (bestCol == NO_COLUMN) ? -1 : (int)bestX;
   if (nearestMm >= 0) {
     lastMm = nearestMm;
+  }
+  if (movingForward) {
+    lastForwardValid = true;
+    lastForwardMm = nearestMm;
+    lastForwardReadyMs = frame.readyMs;
+    skippedSinceForward = 0;
+    stillSinceForward = 0;
+  } else if (stillSinceForward < 0xFFFF) {
+    stillSinceForward++;
   }
 
   // 「あり」：通路の中の障害物が2枚続く（2枚の間で列のずれは ±1 まで）
@@ -771,6 +800,9 @@ void TofView_Update(unsigned long nowMs) {
   // 1枚の間に動きが終わっていない枚は捨てる（読み終えた時刻 − 1枚の時間 が、動きの終わりより後の枚だけを使う）
   if ((long)(frame.readyMs - TOF_FRAME_MS - lastUnstableMs) <= 0) {
     framesSkipped++;
+    if (skippedSinceForward < 0xFFFF) {
+      skippedSinceForward++;
+    }
     if (shadowOnsetWaiting) {
       pendingShadow.skipped++;
     }
@@ -1021,9 +1053,10 @@ void TofView_Print(void) {
              (unsigned long)shadowOnsets, TOF_US_MATCH_MS, (unsigned long)shadowOnsetsMatched,
              (unsigned long)usOnsets, (unsigned long)usOnsetsMatched,
              leadCount > 0 ? leadSumMs / (long)leadCount : 0L);
-  Log_Printf("ToF", "判定に使った %lu 枚／動きをまたいで捨てた %lu 枚 非常停止の距離より近い枚 前進中 %lu／それ以外 %lu 状態によらず「近すぎ」のマス %lu いま：%s",
+  Log_Printf("ToF", "判定に使った %lu 枚／動きをまたいで捨てた %lu 枚 非常停止の距離より近い枚 前進中 %lu／それ以外 %lu（うち試験中で床に置いている間 前進中 %lu／それ以外 %lu） 状態によらず「近すぎ」のマス %lu いま：%s",
              (unsigned long)framesJudged, (unsigned long)framesSkipped, (unsigned long)emergencyFramesForward,
-             (unsigned long)emergencyFrames, (unsigned long)tooNearZones, judgedBlocked ? "あり" : "なし");
+             (unsigned long)emergencyFrames, (unsigned long)emergencyTestFramesForward, (unsigned long)emergencyTestFrames,
+             (unsigned long)tooNearZones, judgedBlocked ? "あり" : "なし");
   PrintFloor();
   if (stopMinValid) {
     Log_Printf("ToF", "前端の隙間の最小 %dmm（r%d c%d %dmm:%u、前後 %.0f 左右 %.0f 高さ %.0f）／横の余裕の最小 %dmm。c で 8×8 の表",

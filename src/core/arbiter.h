@@ -17,4 +17,7 @@ void Arbiter_Update(const SensorData &sensors, unsigned long nowMs);
 // 現在そのレイヤーで実行中の振る舞い名。なければ "なし"
 const char *Arbiter_ActiveName(BehaviorLayer layer);
 
+// そのレイヤーで、いまの振る舞いの前に動いていた振る舞いの名前（交代したときに更新。onStart の中から読める）
+const char *Arbiter_PreviousName(BehaviorLayer layer);
+
 #endif // NOVA_CORE_ARBITER_H
